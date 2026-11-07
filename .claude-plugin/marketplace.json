@@ -1,0 +1,14 @@
+{
+  "name": "flow-life",
+  "description": "Skills for running personal paperwork as a folder an agent keeps in order",
+  "owner": {
+    "name": "Vorski-Imagineering"
+  },
+  "plugins": [
+    {
+      "name": "flow-life",
+      "source": "./plugins/flow-life",
+      "description": "Processes, document register, correspondence and identifier checks for any paperwork folder"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "flow-life",
+  "description": "Run your paperwork (residence, licences, tax, health, anything with forms and letters) as a folder an agent keeps in order: processes with status, a document register with expiry dates, append-only correspondence, and a check that keeps identifiers where they belong",
+  "author": {
+    "name": "Vorski-Imagineering"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/Vorski-Imagineering/flow-life",
+  "homepage": "https://github.com/Vorski-Imagineering/flow-life"
+}

@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""flow-life pre-commit shim: run the installed plugin's check.
+
+Installed by /flow-life:setup with `git config core.hooksPath .githooks`. The plugin's
+location changes when it updates, so it is looked up, in this order: FLOW_LIFE_PLUGIN_ROOT,
+.git/flow-life-plugin-root (written at every Claude Code session start), then Claude Code's
+installed_plugins.json entry for this folder.
+"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def plugin_root():
+    if os.environ.get("FLOW_LIFE_PLUGIN_ROOT"):
+        return Path(os.environ["FLOW_LIFE_PLUGIN_ROOT"])
+    git_dir = subprocess.run(["git", "rev-parse", "--absolute-git-dir"],
+                             capture_output=True, text=True).stdout.strip()
+    recorded = Path(git_dir, "flow-life-plugin-root")
+    if recorded.is_file() and Path(recorded.read_text().strip()).is_dir():
+        return Path(recorded.read_text().strip())
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True).stdout.strip()
+    installed = Path.home() / ".claude/plugins/installed_plugins.json"
+    if installed.is_file():
+        entries = json.loads(installed.read_text()).get("plugins", {})
+        for key, rows in entries.items():
+            if key.split("@")[0] != "flow-life":
+                continue
+            for row in rows:
+                if row.get("scope") == "user" or row.get("projectPath") == top:
+                    if Path(row.get("installPath", "")).is_dir():
+                        return Path(row["installPath"])
+    return None
+
+
+root = plugin_root()
+if root is None:
+    sys.exit("pre-commit: flow-life plugin not found. Open Claude Code in this folder once, "
+             "or set FLOW_LIFE_PLUGIN_ROOT to the plugin folder.")
+sys.exit(subprocess.run(["sh", str(root / "scripts/pre-commit")]).returncode)

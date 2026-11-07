@@ -1,0 +1,10 @@
+# flow-life profile: what this folder does differently from the defaults.
+# Every setting is optional; the defaults are listed in the plugin's
+# references/profile-schema.md. Remove a line to go back to its default.
+profile = 1
+
+# Top-level folders that hold processes/{active,closed}/. Empty = find them.
+areas = []
+
+# report_title = "Status"
+# stale_patterns = []          # regexes for old folder names that must not reappear
