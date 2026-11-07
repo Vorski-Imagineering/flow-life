@@ -41,9 +41,9 @@ shared/reference.md               sources that serve more than one area
 docs/path-map.md                  every move, old -> new
 ```
 
-These are the defaults. The profile (`.agents/flow-life.toml`) can move the register, the
-email log, the path map, the identifiers file and the dashboard; every skill and script
-follows it.
+These are the defaults. The profile (`.agents/flow-life.toml`) can move the documents
+folder, the register, the email log, the path map, the identifiers file and the dashboard;
+wherever these rules name one of them, read the profile's path for it.
 
 A process folder holds `README.md` (status block first), `todo.md`, and as needed
 `drafts/`, `sent-emails/`, `received-emails/`, `submissions/` (with `portal-responses/`),

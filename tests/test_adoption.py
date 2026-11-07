@@ -157,6 +157,20 @@ class Scaffold(Tmp):
             self.assertEqual(self.files(folder), [flowconfig.PROFILE])
         self.assertEqual(self.files(), [f"folder/{flowconfig.PROFILE}"])
 
+    def test_init_refuses_unusable_path_settings(self):
+        folder = self.root / "folder"
+        for line, says in (('register = ["INDEX.md"]', "register"), ('identifiers = ""', "identifiers"),
+                           ('dashboard = "."', "dashboard"), ("register = [", "flow-life.toml")):
+            self.profile(line + "\n", folder)
+            with self.assertRaisesRegex(SystemExit, says):
+                quiet(scaffold.main, ["init", "--dir", str(folder)])
+            self.assertEqual(self.files(folder), [flowconfig.PROFILE])
+
+    def test_init_accepts_a_name_starting_with_two_dots(self):
+        self.profile('register = "..index.md"\n')
+        quiet(scaffold.main, ["init", "--dir", str(self.root)])
+        self.assertTrue((self.root / "..index.md").is_file())
+
     def test_init_ignores_parent_profile(self):
         self.profile('register = "INDEX.md"\n')
         (self.root / "INDEX.md").write_text("# Index\n")

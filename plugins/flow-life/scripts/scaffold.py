@@ -84,11 +84,15 @@ def folder_config(root):
     try:
         settings = tomllib.loads(prof.read_text()) if prof.is_file() else {}
         cfg = flowconfig.Config(root, settings, prof if prof.is_file() else None)
-    except (tomllib.TOMLDecodeError, flowconfig.ProfileError) as e:
+    except tomllib.TOMLDecodeError as e:
+        raise SystemExit(f"flow-life: {prof}: {e}")
+    except flowconfig.ProfileError as e:
         raise SystemExit(f"flow-life: {e}")
     for name in PATH_SETTINGS:
         value = getattr(cfg, name)
-        if os.path.isabs(value) or os.path.normpath(value).startswith(".."):
+        if not isinstance(value, str) or os.path.normpath(value) == ".":
+            raise SystemExit(f"flow-life: {name} = {value!r} is not a file path")
+        if os.path.isabs(value) or os.path.normpath(value).split(os.sep)[0] == "..":
             raise SystemExit(f"flow-life: {name} = {value} is outside this folder")
     return cfg
 
