@@ -6,15 +6,19 @@ profile (`.agents/flow-life.toml`, see `profile-schema.md`) can rename any of th
 
 ## The idea
 
-Paperwork with public bodies, banks and landlords is long-running, repetitive and
-unforgiving. The same documents are asked for again and again and go stale; letters must be
-quoted exactly months later; a deadline missed costs real money. A flow-life folder keeps
+Paperwork with public bodies, banks, landlords and suppliers is long-running, repetitive
+and unforgiving. The same documents are asked for again and again and go stale; letters must
+be quoted exactly months later; a deadline missed costs real money. The same holds for any
+exchange that goes back and forth, with thinking and research between the steps: competing
+quotes, choosing a contractor, a warranty repair, a refund to chase. A flow-life folder keeps
 it in order so that a person, or an agent, can pick up any thread cold:
 
-- **Areas** are long-lived subjects (residence, driving licence, tax, health). An area never
-  closes: renewals and annual returns bring it back.
+- **Areas** are long-lived subjects (residence, driving licence, tax, health, home). An area
+  never closes: renewals and annual returns bring it back.
 - **Processes** are bounded episodes inside an area, with correspondence and an outcome
-  (an application, a complaint, a correction). A process closes; its area does not.
+  (an application, a complaint, a correction, a round of quotes). A process closes; its area
+  does not. A process may have several counterparties: a round of quotes keeps each
+  supplier's correspondence in the one process, and its README compares the offers.
 - **Documents** are evidence shared by every area. One register says which copy is current.
 - **Correspondence** is a record. It is never edited.
 - **Identifiers** (passport, tax and case numbers) live in one owner-only file and in the

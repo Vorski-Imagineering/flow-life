@@ -1,6 +1,6 @@
 ---
 name: new-process
-description: Use when a new piece of paperwork starts — an application, a renewal, a complaint, a correction, a letter that needs an answer — and it should get its own process folder with a status block, a todo and a place for its correspondence.
+description: Use when a new piece of paperwork or a new back-and-forth starts — an application, a renewal, a complaint, a correction, a letter that needs an answer, a round of quotes from suppliers, hiring a contractor, a repair or refund to chase — and it should get its own process folder with a status block, a todo and a place for its correspondence.
 ---
 
 # new-process: open a process

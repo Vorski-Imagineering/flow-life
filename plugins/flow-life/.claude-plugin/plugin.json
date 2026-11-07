@@ -1,6 +1,6 @@
 {
   "name": "flow-life",
-  "description": "Run your paperwork (residence, licences, tax, health, anything with forms and letters) as a folder an agent keeps in order: processes with status, a document register with expiry dates, append-only correspondence, and a check that keeps identifiers where they belong",
+  "description": "Run your paperwork (residence, licences, tax, health, anything with forms and letters) and any back-and-forth with suppliers (competing quotes, contractors, repairs, refunds) as a folder an agent keeps in order: processes with status, a document register with expiry dates, append-only correspondence, and a check that keeps identifiers where they belong",
   "author": {
     "name": "Vorski-Imagineering"
   },

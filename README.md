@@ -6,11 +6,18 @@ Residence permits, driving licences, tax returns, social security, a landlord di
 each one runs for months, every body asks for the same documents, letters have to be
 quoted exactly later, and a missed date costs money. flow-life is a Claude Code plugin
 that keeps all of it in one folder, the same way every time, so you (or Claude) can pick
-up any thread cold:
+up any thread cold.
 
-- **Areas and processes.** Long-lived areas (residence, tax, ...) hold bounded processes
-  (an application, a complaint), each with a status block: `active` (you owe the next
-  move), `waiting` (they do) or `closed`, and one line saying what happens next.
+It is not only for public bodies. Anything that goes back and forth with someone else,
+with thinking and research between the steps, works the same way: getting competing
+quotes from suppliers and comparing them, choosing a builder or a removal firm, an
+insurance renewal, a warranty repair, a refund that has to be chased. Each one is a
+process with its correspondence, its documents, what was learned, and whose move it is.
+
+- **Areas and processes.** Long-lived areas (residence, tax, home, suppliers, ...) hold
+  bounded processes (an application, a complaint, a round of quotes), each with a status
+  block: `active` (you owe the next move), `waiting` (they do) or `closed`, and one line
+  saying what happens next.
 - **A document register.** One file says which copy of each document is current, when it
   expires, what it replaced and where it was sent.
 - **Correspondence as a record.** Emails are kept exactly, logged, filed under the
