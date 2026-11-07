@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """One check for everything the flow-life storage rules require.
 
-    check_repo.py [--fix-modes]
+    check_repo.py [--fix-modes] [--staged]
 
 Run before every commit (the pre-commit hook does). Exit 1 on any problem.
 `--fix-modes` first makes the identifiers file and the email archives owner-only.
 Works in a git repository (tracked and untracked-but-not-ignored files) or in a
 plain folder (every file, skipping .git/ and tmp/).
+
+`--staged` judges the index (what is being committed) in a copy under the git
+directory; the pre-commit hook uses it. Without it, the working tree is checked.
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -134,7 +141,7 @@ def _read(cfg, rel, problems):
     return p.read_text()
 
 
-def check_all(cfg):
+def check_all(cfg, modes=True):
     files = repo_files(cfg.root)
     problems = []
     register = _read(cfg, cfg.register, problems)
@@ -144,18 +151,98 @@ def check_all(cfg):
     return (problems
             + check_register(cfg, files, register)
             + check_email_log(cfg, files, log)
-            + check_modes(cfg, files)
+            + (check_modes(cfg, files) if modes else [])
             + check_identifiers(cfg, files, ids)
             + check_status(cfg)
             + [f"links: {p}" for p in pathmap.check(cfg)])
 
 
+STAGED_PREFIX = "flow-life-staged-"
+
+
+def _git(root, *args, **kw):
+    """git in the folder's root, with the inherited environment: during a commit git sets
+    GIT_INDEX_FILE (relative to the root) to the index being committed."""
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True, **kw)
+
+
+def _index_entries(root):
+    """{path: mode} of the index; submodules (mode 160000) left out."""
+    entries = {}
+    for rec in _git(root, "ls-files", "-s", "-z").stdout.decode().split("\0"):
+        if not rec:
+            continue
+        meta, path = rec.split("\t", 1)
+        mode = meta.split()[0]
+        if mode != "160000":
+            entries[path] = mode
+    return entries
+
+
+def staged_files(cfg):
+    return sorted(_index_entries(cfg.root))
+
+
+@contextmanager
+def staged_copy(cfg):
+    """A copy of the index under the git directory, removed afterwards. Text files the
+    checks read keep their content; every other file is an empty stand-in, since the
+    register and link checks only need it to exist."""
+    git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
+    for old in git_dir.glob(STAGED_PREFIX + "*"):
+        shutil.rmtree(old, ignore_errors=True)
+    dest = Path(tempfile.mkdtemp(prefix=STAGED_PREFIX, dir=git_dir))
+    try:
+        entries = _index_entries(cfg.root)
+        suffixes = {s.lower() for s in cfg.link_text_suffixes | cfg.id_text_suffixes}
+        named = {cfg.register, cfg.email_log, cfg.identifiers, cfg.path_map, cfg.dashboard,
+                 flowconfig.PROFILE}
+        real = [p for p, mode in entries.items()
+                if mode == "120000" or p in named or Path(p).suffix.lower() in suffixes]
+        if real:
+            _git(cfg.root, "checkout-index", "-z", "--stdin", f"--prefix={dest}/",
+                 input="\0".join(real).encode())
+        for p in set(entries) - set(real):
+            stand_in = dest / p
+            stand_in.parent.mkdir(parents=True, exist_ok=True)
+            stand_in.touch()
+        yield dest
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def check_staged(cfg, fix_modes=False):
+    """Problems in what is being committed. Modes are checked on the real files: git
+    does not keep them, so the copy's say nothing."""
+    files = staged_files(cfg)
+    if fix_modes:
+        for f in private_files(cfg, files):
+            if (cfg.root / f).is_file():
+                os.chmod(cfg.root / f, 0o600)
+    with staged_copy(cfg) as copy:
+        staged_profile = copy / flowconfig.PROFILE
+        path = staged_profile if staged_profile.is_file() else cfg.profile_path
+        try:
+            ccfg = flowconfig.Config(copy, tomllib.loads(Path(path).read_text()), path)
+        except (tomllib.TOMLDecodeError, flowconfig.ProfileError) as e:
+            print(f"flow-life: {e}", file=sys.stderr)
+            sys.exit(2)
+        return (check_all(ccfg, modes=False)
+                + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()]))
+
+
 if __name__ == "__main__":
     cfg = flowconfig.load_or_exit()
-    if "--fix-modes" in sys.argv:
-        for f in private_files(cfg, repo_files(cfg.root)):
-            os.chmod(cfg.root / f, 0o600)
-    problems = check_all(cfg)
+    if "--staged" in sys.argv:
+        if not is_git(cfg.root):
+            print("check_repo.py: --staged needs a git repository", file=sys.stderr)
+            sys.exit(2)
+        problems = check_staged(cfg, fix_modes="--fix-modes" in sys.argv)
+    else:
+        if "--fix-modes" in sys.argv:
+            for f in private_files(cfg, repo_files(cfg.root)):
+                os.chmod(cfg.root / f, 0o600)
+        problems = check_all(cfg)
     for p in problems:
         print(p)
     print(f"{len(problems)} problem(s)", file=sys.stderr)

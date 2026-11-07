@@ -169,6 +169,137 @@ class PreCommit(Tmp):
         self.assertIn("stray.pdf", r.stdout + r.stderr)
 
 
+class StagedCheck(Tmp):
+    """The hook judges what is being committed (#2), not other files on disk."""
+
+    git = PreCommit.git
+
+    def setUp(self):
+        super().setUp()
+        self.init("--git", "--hooks")
+        self.git("add", "-A")
+        self.assertEqual(self.git("commit", "-qm", "base").returncode, 0)
+
+    def write(self, rel, text):
+        p = self.root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+
+    def commit(self, *args):
+        r = self.git("commit", "-qm", "c", *args)
+        return r.returncode, r.stdout + r.stderr
+
+    def touch_readme(self):
+        self.write("README.md", (self.root / "README.md").read_text() + "\nA line.\n")
+        self.git("add", "README.md")
+
+    def run_check(self, *flags):
+        return subprocess.run([sys.executable, str(PLUGIN / "scripts/check_repo.py"), *flags],
+                              cwd=self.root, capture_output=True, text=True)
+
+    def test_unfinished_untracked_note_does_not_block(self):
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        self.touch_readme()
+        self.assertEqual(self.commit()[0], 0)
+
+    def test_unstaged_edit_does_not_block(self):
+        self.write("visa/notes.md", "Fine.\n")
+        self.git("add", "visa/notes.md")
+        self.assertEqual(self.commit()[0], 0)
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        self.touch_readme()
+        self.assertEqual(self.commit()[0], 0)
+
+    def test_staged_broken_link_blocks(self):
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        self.git("add", "visa/notes.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("unresolved visa/missing.md", out)
+
+    def test_partially_staged_judges_staged_version(self):
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        self.git("add", "visa/notes.md")
+        self.write("visa/notes.md", "Fixed.\n")
+        self.assertNotEqual(self.commit()[0], 0)
+        self.git("add", "visa/notes.md")
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        self.assertEqual(self.commit()[0], 0)
+
+    def test_staged_document_needs_staged_register_row(self):
+        self.write("documents/tax/a.pdf", "x")
+        self.git("add", "documents/tax/a.pdf")
+        reg = self.root / "documents/register.md"
+        reg.write_text(reg.read_text() + "| a | b | `documents/tax/a.pdf` | | | | | |\n")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("a.pdf is not listed", out)
+
+    def test_link_to_untracked_file_blocks(self):
+        self.write("visa/draft.md", "Not added yet.\n")
+        self.write("visa/notes.md", "See `visa/draft.md`.\n")
+        self.git("add", "visa/notes.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("unresolved visa/draft.md", out)
+
+    def test_commit_of_named_paths_uses_git_index_file(self):
+        self.write("visa/bad.md", "See `visa/missing.md`.\n")
+        self.git("add", "visa/bad.md")
+        self.write("README.md", (self.root / "README.md").read_text() + "\nA line.\n")
+        self.assertEqual(self.commit("--", "README.md")[0], 0)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").stdout.strip(), "visa/bad.md")
+
+    def test_staged_copy_is_private_and_removed(self):
+        self.write("documents/tax/a.pdf", "x" * 1000)
+        reg = self.root / "documents/register.md"
+        reg.write_text(reg.read_text() + "| a | b | `documents/tax/a.pdf` | | | | | |\n")
+        self.write("visa/notes.md", "Staged.\n")
+        self.git("add", "-A")
+        self.write("visa/notes.md", "On disk only.\n")
+        git_dir = Path(self.git("rev-parse", "--absolute-git-dir").stdout.strip())
+        (git_dir / "flow-life-staged-old").mkdir()
+        cfg = flowconfig.load(self.root)
+        with check_repo.staged_copy(cfg) as copy:
+            self.assertEqual(copy.parent, git_dir)
+            self.assertFalse((git_dir / "flow-life-staged-old").exists())
+            self.assertEqual((copy / "visa/notes.md").read_text(), "Staged.\n")
+            self.assertEqual((copy / "documents/tax/a.pdf").stat().st_size, 0)
+        self.assertFalse(copy.exists())
+        with self.assertRaises(RuntimeError):
+            with check_repo.staged_copy(cfg) as copy:
+                raise RuntimeError
+        self.assertEqual(list(git_dir.glob("flow-life-staged-*")), [])
+
+    def test_modes_checked_on_real_files(self):
+        details = self.root / "personal-details.md"
+        os.chmod(details, 0o644)
+        self.assertIn("mode: personal-details.md", self.run_check("--staged").stdout)
+        os.chmod(details, 0o600)
+        self.assertNotIn("mode:", self.run_check("--staged").stdout)
+
+    def test_no_message_names_the_copy(self):
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        self.git("add", "visa/notes.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("flow-life-staged", out)
+
+    def test_manual_run_still_reads_working_tree(self):
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        problems = check_repo.check_all(flowconfig.load(self.root))
+        self.assertTrue(any("unresolved visa/missing.md" in p for p in problems), problems)
+
+
+class StagedOutsideGit(Tmp):
+    def test_staged_outside_git_exits_2(self):
+        self.init()
+        r = subprocess.run([sys.executable, str(PLUGIN / "scripts/check_repo.py"), "--staged"],
+                           cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("needs a git repository", r.stderr)
+
+
 class Report(Tmp):
     def test_deadlines(self):
         readme = ("## Next deadlines\n\n| Date | Area | What |\n|---|---|---|\n"

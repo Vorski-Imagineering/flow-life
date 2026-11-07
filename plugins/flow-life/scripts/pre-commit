@@ -2,7 +2,8 @@
 # flow-life pre-commit check, called by the shim in the adopting repo's .githooks/.
 # 1. Records in immutable folders are append-only: new files and whole-file moves
 #    are fine, edits and deletions are not.
-# 2. check_repo.py must pass (file modes are repaired first; git does not keep them).
+# 2. check_repo.py must pass on what is being committed (--staged), not other files on
+#    disk (file modes are repaired first; git does not keep them).
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(git rev-parse --show-toplevel) || exit 1
 dirs=$(cd "$root" && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import flowconfig; c = flowconfig.load_or_exit(); print("|".join(sorted(c.immutable_dirs)))' "$here") || exit 1
@@ -15,7 +16,7 @@ if [ -n "$bad" ]; then
   exit 1
 fi
 
-cd "$root" && python3 "$here/check_repo.py" --fix-modes || {
+cd "$root" && python3 "$here/check_repo.py" --fix-modes --staged || {
   echo "pre-commit: fix the problems above (/flow-life:status explains them)" >&2
   exit 1
 }
