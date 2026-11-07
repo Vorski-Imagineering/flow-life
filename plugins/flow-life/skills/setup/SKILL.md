@@ -78,8 +78,7 @@ Read this before step 2 when the folder is a project with its own habits:
   its last line with one that runs flow-life's check and then the project's own only when
   that passed, for example
   `code = subprocess.run(["sh", str(root / "scripts/pre-commit")]).returncode` then
-  `sys.exit(code or subprocess.run(["<program>", "<argument>", ...]).returncode)`, the
-  project's command split into its words.
+  `sys.exit(code or subprocess.run(["sh", "-c", "<the project's check command>"]).returncode)`.
   Setup keeps an existing file and a plugin update does not touch it.
 - **Documents in other systems**: register rows with their link; name each system, and the
   tool that reads it, under `## Other systems` in `CLAUDE.md`.
