@@ -142,8 +142,7 @@ class PreCommit(Tmp):
     """The hook refuses edited records and a failed check, judged on what is being
     committed (#2), not other files on disk."""
 
-    def setUp(self):
-        super().setUp()
+    def base(self):
         self.init("--git", "--hooks")
         self.git("add", "-A")
         self.assertEqual(self.git("commit", "-qm", "base").returncode, 0)
@@ -195,11 +194,13 @@ class PreCommit(Tmp):
                               cwd=self.root, capture_output=True, text=True)
 
     def test_unfinished_untracked_note_does_not_block(self):
+        self.base()
         self.write("visa/notes.md", "See `visa/missing.md`.\n")
         self.touch_readme()
         self.assertEqual(self.commit()[0], 0)
 
     def test_unstaged_edit_does_not_block(self):
+        self.base()
         self.write("visa/notes.md", "Fine.\n")
         self.git("add", "visa/notes.md")
         self.assertEqual(self.commit()[0], 0)
@@ -208,6 +209,7 @@ class PreCommit(Tmp):
         self.assertEqual(self.commit()[0], 0)
 
     def test_staged_broken_link_blocks(self):
+        self.base()
         self.write("visa/notes.md", "See `visa/missing.md`.\n")
         self.git("add", "visa/notes.md")
         code, out = self.commit()
@@ -215,6 +217,7 @@ class PreCommit(Tmp):
         self.assertIn("unresolved visa/missing.md", out)
 
     def test_partially_staged_judges_staged_version(self):
+        self.base()
         self.write("visa/notes.md", "See `visa/missing.md`.\n")
         self.git("add", "visa/notes.md")
         self.write("visa/notes.md", "Fixed.\n")
@@ -224,6 +227,7 @@ class PreCommit(Tmp):
         self.assertEqual(self.commit()[0], 0)
 
     def test_staged_document_needs_staged_register_row(self):
+        self.base()
         self.write("documents/tax/a.pdf", "x")
         self.git("add", "documents/tax/a.pdf")
         reg = self.root / "documents/register.md"
@@ -233,6 +237,7 @@ class PreCommit(Tmp):
         self.assertIn("a.pdf is not listed", out)
 
     def test_link_to_untracked_file_blocks(self):
+        self.base()
         self.write("visa/draft.md", "Not added yet.\n")
         self.write("visa/notes.md", "See `visa/draft.md`.\n")
         self.git("add", "visa/notes.md")
@@ -241,6 +246,7 @@ class PreCommit(Tmp):
         self.assertIn("unresolved visa/draft.md", out)
 
     def test_commit_of_named_paths_uses_git_index_file(self):
+        self.base()
         self.write("visa/bad.md", "See `visa/missing.md`.\n")
         self.git("add", "visa/bad.md")
         self.write("README.md", (self.root / "README.md").read_text() + "\nA line.\n")
@@ -248,6 +254,7 @@ class PreCommit(Tmp):
         self.assertEqual(self.git("diff", "--cached", "--name-only").stdout.strip(), "visa/bad.md")
 
     def test_staged_copy_is_private_and_removed(self):
+        self.base()
         self.write("documents/tax/a.pdf", "x" * 1000)
         reg = self.root / "documents/register.md"
         reg.write_text(reg.read_text() + "| a | b | `documents/tax/a.pdf` | | | | | |\n")
@@ -256,22 +263,20 @@ class PreCommit(Tmp):
         self.write("visa/notes.md", "On disk only.\n")
         git_dir = Path(self.git("rev-parse", "--absolute-git-dir").stdout.strip())
         (git_dir / "flow-life-staged-old").mkdir()
-        os.utime(git_dir / "flow-life-staged-old", (0, 0))
-        (git_dir / "flow-life-staged-live").mkdir()
         cfg = flowconfig.load(self.root)
         with check_repo.staged_copy(cfg) as copy:
             self.assertEqual(copy.parent, git_dir)
             self.assertFalse((git_dir / "flow-life-staged-old").exists())
-            self.assertTrue((git_dir / "flow-life-staged-live").exists())
             self.assertEqual((copy / "visa/notes.md").read_text(), "Staged.\n")
             self.assertEqual((copy / "documents/tax/a.pdf").stat().st_size, 0)
         self.assertFalse(copy.exists())
         with self.assertRaises(RuntimeError):
             with check_repo.staged_copy(cfg) as copy:
                 raise RuntimeError
-        self.assertEqual([p.name for p in git_dir.glob("flow-life-staged-*")], ["flow-life-staged-live"])
+        self.assertEqual(list(git_dir.glob("flow-life-staged-*")), [])
 
     def test_modes_checked_on_real_files(self):
+        self.base()
         details = self.root / "personal-details.md"
         os.chmod(details, 0o644)
         self.assertIn("mode: personal-details.md", self.run_check("--staged").stdout)
@@ -279,6 +284,7 @@ class PreCommit(Tmp):
         self.assertNotIn("mode:", self.run_check("--staged").stdout)
 
     def test_no_message_names_the_copy(self):
+        self.base()
         self.write("visa/notes.md", "See `visa/missing.md`.\n")
         self.git("add", "visa/notes.md")
         code, out = self.commit()
@@ -286,6 +292,7 @@ class PreCommit(Tmp):
         self.assertNotIn("flow-life-staged", out)
 
     def test_manual_run_still_reads_working_tree(self):
+        self.base()
         self.write("visa/notes.md", "See `visa/missing.md`.\n")
         problems = check_repo.check_all(flowconfig.load(self.root))
         self.assertTrue(any("unresolved visa/missing.md" in p for p in problems), problems)
@@ -299,18 +306,37 @@ class PreCommit(Tmp):
         self.assertIn("needs a git repository", r.stderr)
 
     def test_symlink_outside_folder_passes(self):
-        outside = self.root.parent / f"{self.root.name}-outside.md"
+        self.base()
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        outside = Path(elsewhere.name) / "outside.md"
         outside.write_text("x")
-        self.addCleanup(outside.unlink)
-        os.symlink(f"../../{outside.name}", self.root / "visa/ext.md")
+        os.symlink(os.path.relpath(outside, self.root / "visa"), self.root / "visa/ext.md")
         self.git("add", "visa/ext.md")
         code, out = self.commit()
         self.assertEqual(code, 0, out)
 
+    def test_symlink_without_symlink_support_is_checked(self):
+        self.base()
+        self.git("config", "core.symlinks", "false")
+        os.symlink("../README.md", self.root / "visa/home.md")
+        self.git("add", "visa/home.md")
+        code, out = self.commit()
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(code, 0, out)
+
+    def test_symlink_back_into_folder_needs_its_target_staged(self):
+        self.base()
+        self.write("visa/draft.md", "Not added yet.\n")
+        os.symlink(f"../../{self.root.name}/visa/draft.md", self.root / "visa/ext.md")
+        self.git("add", "visa/ext.md")
+        self.assertNotEqual(self.commit()[0], 0)
+
     def test_bad_staged_profile_names_the_profile_not_the_copy(self):
+        self.base()
         prof = self.root / flowconfig.PROFILE
         good = prof.read_text()
-        for bad, says in ((good + "bogus = 1\n", "bogus"), (good + "x = [\n", "")):
+        for bad, says in ((good + "bogus = 1\n", "bogus"), (good + "x = [\n", "Invalid value")):
             prof.write_text(bad)
             self.git("add", flowconfig.PROFILE)
             prof.write_text(good)
@@ -322,6 +348,7 @@ class PreCommit(Tmp):
             self.git("reset", "-q", flowconfig.PROFILE)
 
     def test_intent_to_add_file_is_not_in_the_commit(self):
+        self.base()
         self.write("visa/draft.md", "Draft.\n")
         self.git("add", "-N", "visa/draft.md")
         self.write("visa/notes.md", "See `visa/draft.md`.\n")
