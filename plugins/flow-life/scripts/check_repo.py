@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
@@ -158,6 +159,7 @@ def check_all(cfg, modes=True):
 
 
 STAGED_PREFIX = "flow-life-staged-"
+LEFTOVER_AGE = 600  # seconds; a younger copy may be another check's, still running
 
 
 def _git(root, *args, **kw):
@@ -167,14 +169,16 @@ def _git(root, *args, **kw):
 
 
 def _index_entries(root):
-    """{path: mode} of the index; submodules (mode 160000) left out."""
+    """{path: mode} of what the commit will contain: the tree written from the index
+    (intent-to-add entries are not in it); submodules left out."""
+    tree = _git(root, "write-tree", text=True).stdout.strip()
     entries = {}
-    for rec in _git(root, "ls-files", "-s", "-z").stdout.decode().split("\0"):
+    for rec in _git(root, "ls-tree", "-r", "-z", tree).stdout.decode().split("\0"):
         if not rec:
             continue
         meta, path = rec.split("\t", 1)
-        mode = meta.split()[0]
-        if mode != "160000":
+        mode, kind = meta.split()[:2]
+        if kind != "commit":
             entries[path] = mode
     return entries
 
@@ -184,16 +188,17 @@ def staged_files(cfg):
 
 
 @contextmanager
-def staged_copy(cfg):
+def staged_copy(cfg, entries=None):
     """A copy of the index under the git directory, removed afterwards. Text files the
     checks read keep their content; every other file is an empty stand-in, since the
     register and link checks only need it to exist."""
     git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
     for old in git_dir.glob(STAGED_PREFIX + "*"):
-        shutil.rmtree(old, ignore_errors=True)
+        if time.time() - old.stat().st_mtime > LEFTOVER_AGE:
+            shutil.rmtree(old, ignore_errors=True)
     dest = Path(tempfile.mkdtemp(prefix=STAGED_PREFIX, dir=git_dir))
     try:
-        entries = _index_entries(cfg.root)
+        entries = _index_entries(cfg.root) if entries is None else entries
         suffixes = {s.lower() for s in cfg.link_text_suffixes | cfg.id_text_suffixes}
         named = {cfg.register, cfg.email_log, cfg.identifiers, cfg.path_map, cfg.dashboard,
                  flowconfig.PROFILE}
@@ -206,6 +211,14 @@ def staged_copy(cfg):
             stand_in = dest / p
             stand_in.parent.mkdir(parents=True, exist_ok=True)
             stand_in.touch()
+        # A link out of the folder would resolve inside the git directory from the copy:
+        # point it at the same place, outside the folder, as on disk.
+        for p in (p for p, mode in entries.items() if mode == "120000"):
+            target = os.readlink(dest / p)
+            if not os.path.isabs(target) and os.path.normpath(
+                    os.path.join(os.path.dirname(p), target)).startswith(".."):
+                (dest / p).unlink()
+                os.symlink(os.path.normpath(os.path.join(cfg.root, os.path.dirname(p), target)), dest / p)
         yield dest
     finally:
         shutil.rmtree(dest, ignore_errors=True)
@@ -214,17 +227,24 @@ def staged_copy(cfg):
 def check_staged(cfg, fix_modes=False):
     """Problems in what is being committed. Modes are checked on the real files: git
     does not keep them, so the copy's say nothing."""
-    files = staged_files(cfg)
+    entries = _index_entries(cfg.root)
+    files = sorted(entries)
     if fix_modes:
         for f in private_files(cfg, files):
             if (cfg.root / f).is_file():
                 os.chmod(cfg.root / f, 0o600)
-    with staged_copy(cfg) as copy:
+    with staged_copy(cfg, entries) as copy:
         staged_profile = copy / flowconfig.PROFILE
-        path = staged_profile if staged_profile.is_file() else cfg.profile_path
+        if staged_profile.is_file():
+            path, shown = staged_profile, f"{flowconfig.PROFILE} (staged)"
+        else:
+            path = shown = cfg.profile_path
         try:
-            ccfg = flowconfig.Config(copy, tomllib.loads(Path(path).read_text()), path)
-        except (tomllib.TOMLDecodeError, flowconfig.ProfileError) as e:
+            ccfg = flowconfig.Config(copy, tomllib.loads(Path(path).read_text()), shown)
+        except tomllib.TOMLDecodeError as e:
+            print(f"flow-life: {shown}: {e}", file=sys.stderr)
+            sys.exit(2)
+        except flowconfig.ProfileError as e:
             print(f"flow-life: {e}", file=sys.stderr)
             sys.exit(2)
         return (check_all(ccfg, modes=False)

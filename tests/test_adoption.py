@@ -139,6 +139,15 @@ class Guard(Tmp):
 
 
 class PreCommit(Tmp):
+    """The hook refuses edited records and a failed check, judged on what is being
+    committed (#2), not other files on disk."""
+
+    def setUp(self):
+        super().setUp()
+        self.init("--git", "--hooks")
+        self.git("add", "-A")
+        self.assertEqual(self.git("commit", "-qm", "base").returncode, 0)
+
     def git(self, *args):
         env = dict(os.environ, FLOW_LIFE_PLUGIN_ROOT=str(PLUGIN), GIT_AUTHOR_NAME="t",
                    GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
@@ -167,18 +176,6 @@ class PreCommit(Tmp):
         r = self.git("commit", "-qm", "stray")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("stray.pdf", r.stdout + r.stderr)
-
-
-class StagedCheck(Tmp):
-    """The hook judges what is being committed (#2), not other files on disk."""
-
-    git = PreCommit.git
-
-    def setUp(self):
-        super().setUp()
-        self.init("--git", "--hooks")
-        self.git("add", "-A")
-        self.assertEqual(self.git("commit", "-qm", "base").returncode, 0)
 
     def write(self, rel, text):
         p = self.root / rel
@@ -259,17 +256,20 @@ class StagedCheck(Tmp):
         self.write("visa/notes.md", "On disk only.\n")
         git_dir = Path(self.git("rev-parse", "--absolute-git-dir").stdout.strip())
         (git_dir / "flow-life-staged-old").mkdir()
+        os.utime(git_dir / "flow-life-staged-old", (0, 0))
+        (git_dir / "flow-life-staged-live").mkdir()
         cfg = flowconfig.load(self.root)
         with check_repo.staged_copy(cfg) as copy:
             self.assertEqual(copy.parent, git_dir)
             self.assertFalse((git_dir / "flow-life-staged-old").exists())
+            self.assertTrue((git_dir / "flow-life-staged-live").exists())
             self.assertEqual((copy / "visa/notes.md").read_text(), "Staged.\n")
             self.assertEqual((copy / "documents/tax/a.pdf").stat().st_size, 0)
         self.assertFalse(copy.exists())
         with self.assertRaises(RuntimeError):
             with check_repo.staged_copy(cfg) as copy:
                 raise RuntimeError
-        self.assertEqual(list(git_dir.glob("flow-life-staged-*")), [])
+        self.assertEqual([p.name for p in git_dir.glob("flow-life-staged-*")], ["flow-life-staged-live"])
 
     def test_modes_checked_on_real_files(self):
         details = self.root / "personal-details.md"
@@ -290,14 +290,45 @@ class StagedCheck(Tmp):
         problems = check_repo.check_all(flowconfig.load(self.root))
         self.assertTrue(any("unresolved visa/missing.md" in p for p in problems), problems)
 
-
-class StagedOutsideGit(Tmp):
     def test_staged_outside_git_exits_2(self):
-        self.init()
-        r = subprocess.run([sys.executable, str(PLUGIN / "scripts/check_repo.py"), "--staged"],
-                           cwd=self.root, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as plain:
+            quiet(scaffold.main, ["init", "--dir", plain])
+            r = subprocess.run([sys.executable, str(PLUGIN / "scripts/check_repo.py"), "--staged"],
+                               cwd=plain, capture_output=True, text=True)
         self.assertEqual(r.returncode, 2)
         self.assertIn("needs a git repository", r.stderr)
+
+    def test_symlink_outside_folder_passes(self):
+        outside = self.root.parent / f"{self.root.name}-outside.md"
+        outside.write_text("x")
+        self.addCleanup(outside.unlink)
+        os.symlink(f"../../{outside.name}", self.root / "visa/ext.md")
+        self.git("add", "visa/ext.md")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_bad_staged_profile_names_the_profile_not_the_copy(self):
+        prof = self.root / flowconfig.PROFILE
+        good = prof.read_text()
+        for bad, says in ((good + "bogus = 1\n", "bogus"), (good + "x = [\n", "")):
+            prof.write_text(bad)
+            self.git("add", flowconfig.PROFILE)
+            prof.write_text(good)
+            code, out = self.commit()
+            self.assertNotEqual(code, 0)
+            self.assertIn(".agents/flow-life.toml (staged)", out)
+            self.assertIn(says, out)
+            self.assertNotIn("flow-life-staged", out)
+            self.git("reset", "-q", flowconfig.PROFILE)
+
+    def test_intent_to_add_file_is_not_in_the_commit(self):
+        self.write("visa/draft.md", "Draft.\n")
+        self.git("add", "-N", "visa/draft.md")
+        self.write("visa/notes.md", "See `visa/draft.md`.\n")
+        self.git("add", "visa/notes.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("unresolved visa/draft.md", out)
 
 
 class Report(Tmp):
