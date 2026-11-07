@@ -16,6 +16,6 @@ Last updated: {today}
 
 ## Expiring or stale documents
 
-From `documents/register.md`:
+From `{register}`:
 
 - none yet

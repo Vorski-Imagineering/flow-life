@@ -102,6 +102,84 @@ class Scaffold(Tmp):
         self.assertTrue(any("passport.pdf is not listed" in p for p in problems), problems)
         self.assertTrue(any("Passport appears in visa/reference.md" in p for p in problems), problems)
 
+    def profile(self, text, root=None):
+        root = root or self.root
+        (root / ".agents").mkdir(parents=True, exist_ok=True)
+        (root / flowconfig.PROFILE).write_text("profile = 1\n" + text)
+
+    def files(self, root=None):
+        root = root or self.root
+        return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+
+    def test_init_follows_existing_profile_register(self):
+        self.profile('register = "INDEX.md"\n')
+        (self.root / "INDEX.md").write_text("# Index\n")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            scaffold.main(["init", "--dir", str(self.root), "--areas", "visa"])
+        self.assertFalse((self.root / "documents/register.md").exists())
+        self.assertEqual((self.root / "INDEX.md").read_text(), "# Index\n")
+        self.assertIn("kept     INDEX.md", out.getvalue().splitlines())
+        readme = (self.root / "README.md").read_text()
+        self.assertIn("`INDEX.md`", readme)
+        self.assertNotIn("documents/register.md", readme)
+        self.assertIn("`INDEX.md`", (self.root / "CLAUDE.md").read_text())
+        self.assertEqual(check_repo.check_all(flowconfig.load(self.root)), [])
+
+    def test_init_creates_files_at_profile_paths(self):
+        self.profile('register = "papers/index.md"\nemail_log = "papers/mail-log.md"\n'
+                     'path_map = "papers/moves.md"\nidentifiers = "private/ids.md"\n'
+                     'dashboard = "HOME.md"\n')
+        quiet(scaffold.main, ["init", "--dir", str(self.root), "--areas", "visa"])
+        for rel in ("papers/index.md", "papers/mail-log.md", "papers/moves.md",
+                    "private/ids.md", "HOME.md"):
+            self.assertTrue((self.root / rel).is_file(), rel)
+        for rel in ("documents/register.md", "shared/correspondence/email-log.md",
+                    "docs/path-map.md", "personal-details.md", "README.md"):
+            self.assertFalse((self.root / rel).exists(), rel)
+        self.assertEqual(os.stat(self.root / "private/ids.md").st_mode & 0o777, 0o600)
+        self.assertIn("`papers/index.md`", (self.root / "HOME.md").read_text())
+        self.assertEqual(check_repo.check_all(flowconfig.load(self.root)), [])
+
+    def test_init_with_bad_profile_writes_nothing(self):
+        self.profile('registr = "x.md"\n')
+        with self.assertRaisesRegex(SystemExit, "registr"):
+            quiet(scaffold.main, ["init", "--dir", str(self.root), "--git"])
+        self.assertEqual(self.files(), [flowconfig.PROFILE])
+        self.assertFalse((self.root / ".git").exists())
+
+    def test_init_refuses_path_outside_folder(self):
+        folder = self.root / "folder"
+        for value in ("../outside.md", "/x.md"):
+            self.profile(f'register = "{value}"\n', folder)
+            with self.assertRaisesRegex(SystemExit, "register"):
+                quiet(scaffold.main, ["init", "--dir", str(folder)])
+            self.assertEqual(self.files(folder), [flowconfig.PROFILE])
+        self.assertEqual(self.files(), [f"folder/{flowconfig.PROFILE}"])
+
+    def test_init_ignores_parent_profile(self):
+        self.profile('register = "INDEX.md"\n')
+        (self.root / "INDEX.md").write_text("# Index\n")
+        quiet(scaffold.main, ["init", "--dir", str(self.root / "sub")])
+        self.assertTrue((self.root / "sub" / flowconfig.PROFILE).is_file())
+        self.assertTrue((self.root / "sub/documents/register.md").is_file())
+        self.assertEqual((self.root / "INDEX.md").read_text(), "# Index\n")
+
+    def test_init_without_profile_fills_defaults(self):
+        self.init()
+        self.assertIn("`documents/register.md`", (self.root / "README.md").read_text())
+        for rel in self.files():
+            text = (self.root / rel).read_text(errors="ignore")
+            for placeholder in ("{register}", "{identifiers}", "{documents_dir}"):
+                self.assertNotIn(placeholder, text, rel)
+
+    def test_templates_name_no_default_paths(self):
+        for rel in ("README.md", "CLAUDE.md", "documents/register.md"):
+            text = (PLUGIN / "templates" / rel).read_text()
+            for default in ("documents/register.md", "shared/correspondence/email-log.md",
+                            "docs/path-map.md", "personal-details.md"):
+                self.assertNotIn(default, text, rel)
+
 
 class SetupCheck(Tmp):
     def levels(self):
