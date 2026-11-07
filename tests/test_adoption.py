@@ -160,7 +160,8 @@ class Scaffold(Tmp):
     def test_init_refuses_unusable_path_settings(self):
         folder = self.root / "folder"
         for line, says in (('register = ["INDEX.md"]', "register"), ('identifiers = ""', "identifiers"),
-                           ('dashboard = "."', "dashboard"), ("register = [", "flow-life.toml")):
+                           ('dashboard = "."', "dashboard"), ("documents_dir = 5", "documents_dir"),
+                           ("register = [", "flow-life.toml")):
             self.profile(line + "\n", folder)
             with self.assertRaisesRegex(SystemExit, says):
                 quiet(scaffold.main, ["init", "--dir", str(folder)])

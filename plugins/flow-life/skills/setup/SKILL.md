@@ -70,14 +70,16 @@ Read this before step 2 when the folder is a project with its own habits:
   append-only, so a re-capture is a new file), or a top-level folder to
   `link_excluded_prefixes`. A list setting replaces its default, so write the defaults
   too (`references/profile-schema.md`): `immutable_dirs = ["sent-emails",
-  "received-emails", "portal-responses", "sources"]`.
+  "received-emails", "portal-responses", "sources"]`, or
+  `link_excluded_prefixes = [".git/", "tmp/", "<folder>/"]`.
 - **Links**: root-relative by default; a path whose first segment is not a top-level name
   is read relative to the file that holds it.
 - **The project's own commit checks**: in `.githooks/pre-commit` (a Python script), replace
   its last line with one that runs flow-life's check and then the project's own only when
   that passed, for example
   `code = subprocess.run(["sh", str(root / "scripts/pre-commit")]).returncode` then
-  `sys.exit(code or subprocess.run(["<the project's check command>"]).returncode)`.
+  `sys.exit(code or subprocess.run(["<program>", "<argument>", ...]).returncode)`, the
+  project's command split into its words.
   Setup keeps an existing file and a plugin update does not touch it.
 - **Documents in other systems**: register rows with their link; name each system, and the
   tool that reads it, under `## Other systems` in `CLAUDE.md`.

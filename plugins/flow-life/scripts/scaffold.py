@@ -88,7 +88,7 @@ def folder_config(root):
         raise SystemExit(f"flow-life: {prof}: {e}")
     except flowconfig.ProfileError as e:
         raise SystemExit(f"flow-life: {e}")
-    for name in PATH_SETTINGS:
+    for name in (*PATH_SETTINGS, "documents_dir"):
         value = getattr(cfg, name)
         if not isinstance(value, str) or os.path.normpath(value) == ".":
             raise SystemExit(f"flow-life: {name} = {value!r} is not a file path")
