@@ -316,6 +316,30 @@ class PreCommit(Tmp):
         code, out = self.commit()
         self.assertEqual(code, 0, out)
 
+    def test_missing_outside_target_is_broken_and_named_as_committed(self):
+        self.base()
+        os.symlink("../../config", self.root / "visa/cfg.md")
+        self.git("add", "visa/cfg.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("symlink visa/cfg.md -> ../../config: broken", out)
+
+    def test_intent_to_add_in_a_subfolder_repo(self):
+        outer = tempfile.TemporaryDirectory()
+        self.addCleanup(outer.cleanup)
+        top = Path(outer.name)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(top)], check=True)
+        folder = top / "papers"
+        quiet(scaffold.main, ["init", "--dir", str(folder), "--areas", "visa"])
+        (folder / "visa/empty.md").write_text("")
+        (folder / "visa/notes.md").write_text("See `visa/empty.md`.\n")
+        subprocess.run(["git", "add", "-A"], cwd=folder, check=True)
+        entries = check_repo.staged_files(flowconfig.load(folder))
+        self.assertIn("visa/empty.md", entries)
+        (folder / "visa/draft.md").write_text("Draft.\n")
+        subprocess.run(["git", "add", "-N", "visa/draft.md"], cwd=folder, check=True)
+        self.assertNotIn("visa/draft.md", check_repo.staged_files(flowconfig.load(folder)))
+
     def test_symlink_without_symlink_support_is_checked(self):
         self.base()
         self.git("config", "core.symlinks", "false")

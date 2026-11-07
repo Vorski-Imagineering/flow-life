@@ -158,7 +158,6 @@ def check_all(cfg, modes=True):
 
 
 STAGED_PREFIX = "flow-life-staged-"
-EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 
 
 def _git(root, *args, **kw):
@@ -167,30 +166,21 @@ def _git(root, *args, **kw):
     return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True, **kw)
 
 
-def _names(root, *args):
-    r = subprocess.run(["git", *args, "-z"], cwd=root, capture_output=True)
-    return set(r.stdout.decode().split("\0")) - {""} if r.returncode == 0 else set()
-
-
 def staged_files(cfg):
     """{path: mode} of what the commit will contain, read from the index without writing
-    to it. Submodules are left out, and so are intent-to-add entries (`git add -N`): they
-    carry the empty blob yet are neither staged (`diff --cached`) nor in HEAD."""
-    entries, empty = {}, set()
+    to it. Submodules are left out, and so are intent-to-add entries (`git add -N`), which
+    `git diff-files` lists as added."""
+    entries = {}
     for rec in _git(cfg.root, "ls-files", "-s", "-z").stdout.decode().split("\0"):
         if not rec:
             continue
         meta, path = rec.split("\t", 1)
-        mode, sha = meta.split()[:2]
+        mode = meta.split()[0]
         if mode != "160000":
             entries[path] = mode
-            if sha == EMPTY_BLOB:
-                empty.add(path)
-    if empty:
-        kept = (_names(cfg.root, "diff", "--cached", "--name-only", "--no-renames")
-                | _names(cfg.root, "ls-tree", "-r", "--name-only", "HEAD"))
-        for path in empty - kept:
-            del entries[path]
+    added = _git(cfg.root, "diff-files", "--name-only", "--diff-filter=A", "--relative", "-z")
+    for path in added.stdout.decode().split("\0"):
+        entries.pop(path, None)
     return entries
 
 
@@ -217,13 +207,13 @@ def staged_copy(cfg, entries=None):
             stand_in = dest / p
             stand_in.parent.mkdir(parents=True, exist_ok=True)
             stand_in.touch()
-        # A link to an existing file outside the folder would resolve inside the git
-        # directory from the copy: point it at that file, as on disk.
+        # A link out of the folder would resolve inside the git directory from the copy:
+        # point it where it points on disk.
         for p in (p for p, mode in entries.items() if mode == "120000" and (dest / p).is_symlink()):
-            real = os.path.normpath(os.path.join(cfg.root, os.path.dirname(p), os.readlink(dest / p)))
-            if os.path.commonpath([real, str(cfg.root)]) != str(cfg.root) and os.path.exists(real):
+            target = os.path.normpath(os.path.join(cfg.root, os.path.dirname(p), os.readlink(dest / p)))
+            if os.path.commonpath([target, str(cfg.root)]) != str(cfg.root):
                 (dest / p).unlink()
-                os.symlink(real, dest / p)
+                os.symlink(target, dest / p)
         yield dest
     finally:
         shutil.rmtree(dest, ignore_errors=True)
@@ -252,8 +242,14 @@ def check_staged(cfg, fix_modes=False):
         except flowconfig.ProfileError as e:
             print(f"flow-life: {e}", file=sys.stderr)
             sys.exit(2)
-        return (check_all(ccfg, modes=False)
-                + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()]))
+        problems = check_all(ccfg, modes=False)
+    # A redirected link is reported with the target it was committed with.
+    for i, prob in enumerate(problems):
+        m = re.fullmatch(r"links: symlink (.+) -> (/.*): broken", prob)
+        if m and entries.get(m[1]) == "120000":
+            committed = _git(cfg.root, "cat-file", "blob", f":./{m[1]}", text=True).stdout
+            problems[i] = f"links: symlink {m[1]} -> {committed}: broken"
+    return problems + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()])
 
 
 if __name__ == "__main__":
