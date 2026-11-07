@@ -38,3 +38,9 @@ python3 -m unittest discover -s tests
 
 A new test is not finished until it has been seen failing: break the thing it names, run
 it, confirm red, restore.
+
+## Development process
+
+The process skills (`/gogogo:spec`, `/gogogo:dev`, `/gogogo:auto-dev`, ...) come from the
+`gogogo` plugin (project-scope install, `.claude/settings.json`). This repo's specifics,
+its board, test lanes, Hard Stops and recon traps, are in `.agents/dev-process.md`.
