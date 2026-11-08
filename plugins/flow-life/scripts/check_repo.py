@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import functools
 import tempfile
 import tomllib
 from contextlib import contextmanager
@@ -187,7 +188,7 @@ def _intent_to_add(root):
                           capture_output=True).returncode == 0
     in_head = (set(os.fsdecode(_git(root, "ls-tree", "-r", "--full-tree", "--name-only", "-z",
                                     "HEAD").stdout).split("\0")) if born else set())
-    prefix = os.fsdecode(_git(root, "rev-parse", "--show-prefix").stdout).strip()
+    prefix = os.fsdecode(_git(root, "rev-parse", "--show-prefix").stdout).rstrip("\n")
     return {p[len(prefix):] for p in candidates - in_head if p.startswith(prefix)}
 
 
@@ -208,16 +209,29 @@ def staged_files(cfg):
     return entries
 
 
+def _partial_clone(root):
+    """True when git could fetch a missing object from a promisor remote."""
+    def config(*args):
+        return subprocess.run(["git", "config", *args], cwd=root, capture_output=True, text=True)
+    if config("--get", "extensions.partialClone").returncode == 0:
+        return True
+    lines = config("--get-regexp", r"^remote\..*\.promisor$").stdout.splitlines()
+    return any(line.split()[1:] == ["true"] for line in lines)
+
+
+@functools.lru_cache(maxsize=None)
+def _local_objects(root):
+    return frozenset(_git(root, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)",
+                          text=True).stdout.split())
+
+
 def _blobs(root, shas):
-    """{sha: bytes or None} read from the object store as stored: no attribute filter
-    (smudge, LFS) runs, and nothing is fetched. In a partial clone only objects already
-    in the store are asked for, whatever git's version; a blob not there is None."""
+    """{sha: bytes} read from the object store as stored: no attribute filter (smudge,
+    LFS) runs, and nothing is fetched. In a partial clone only objects already in the
+    store are asked for, whatever git's version. A blob not in the store is absent."""
     shas = sorted(set(shas))
-    if shas and subprocess.run(["git", "config", "--get", "extensions.partialClone"],
-                               cwd=root, capture_output=True).returncode == 0:
-        local = set(_git(root, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)",
-                         text=True).stdout.split())
-        shas = [s for s in shas if s in local]
+    if shas and _partial_clone(root):
+        shas = [s for s in shas if s in _local_objects(root)]
     blobs = {}
     if not shas:
         return blobs
@@ -237,10 +251,15 @@ def _blobs(root, shas):
 
 
 def _place(cfg, path, target):
-    """Where the link at path points: ("inside", folder-relative path) or ("outside",
-    real path). Only the part of the target before it enters the folder is resolved, so
-    a symlink inside the folder that the commit may not contain decides nothing."""
+    """Where the link at path points: ("as-is", None) for a relative target that stays in
+    the folder (the copy resolves it as a clone would), ("inside", folder-relative path)
+    for an absolute one into the folder, or ("outside", real path). Only the part of an
+    absolute target before it enters the folder is resolved, so a symlink inside the
+    folder that the commit may not contain decides nothing."""
     lexical = os.path.normpath(os.path.join(cfg.root, os.path.dirname(path), target))
+    if not os.path.isabs(target):
+        inside = os.path.commonpath([lexical, str(cfg.root)]) == str(cfg.root)
+        return ("as-is", None) if inside else ("outside", os.path.realpath(lexical))
     parts = Path(lexical).parts
     for i in range(1, len(parts) + 1):
         head = os.path.realpath(os.path.join(*parts[:i]))
@@ -262,8 +281,8 @@ def staged_copy(cfg, entries=None):
     whose blob is not in the store, is an empty stand-in, since the register and link
     checks only need it to exist. A link out of the folder points where it does on disk when its
     target exists, and is left out when it does not (check_staged reports it); an
-    link into the folder points into the copy. Stops, exit 2, when a file the profile
-    names is not in the object store."""
+    link into the folder points into the copy. Stops, exit 2, when the profile, register,
+    email log or identifiers file is not in the object store."""
     git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
     for old in git_dir.glob(STAGED_PREFIX + "*"):
         shutil.rmtree(old, ignore_errors=True)
@@ -271,8 +290,8 @@ def staged_copy(cfg, entries=None):
     try:
         entries = staged_files(cfg) if entries is None else entries
         suffixes = {s.lower() for s in cfg.link_text_suffixes | cfg.id_text_suffixes}
-        named = {cfg.register, cfg.email_log, cfg.identifiers, cfg.path_map, cfg.dashboard,
-                 flowconfig.PROFILE}
+        read = {cfg.register, cfg.email_log, cfg.identifiers, flowconfig.PROFILE}
+        named = read | {cfg.path_map, cfg.dashboard}
         real = {p for p, (mode, _) in entries.items()
                 if mode == "120000" or p in named or _process_readme(p)
                 or Path(p).suffix.lower() in suffixes}
@@ -281,15 +300,18 @@ def staged_copy(cfg, entries=None):
             out = dest / p
             out.parent.mkdir(parents=True, exist_ok=True)
             content = blobs.get(sha) if p in real else None
-            if p in real and content is None and p in named:
+            if p in real and content is None and p in read:
                 print(f"flow-life: {p} is not in the object store, so the commit cannot be "
                       "checked", file=sys.stderr)
                 sys.exit(2)
             if content is None:
                 out.touch()
             elif mode == "120000":
-                where, place = _place(cfg, p, os.fsdecode(content))
-                if where == "inside":
+                target = os.fsdecode(content)
+                where, place = _place(cfg, p, target)
+                if where == "as-is":
+                    os.symlink(target, out)
+                elif where == "inside":
                     os.symlink(os.path.relpath(dest / place, out.parent), out)
                 elif os.path.exists(place):
                     os.symlink(place, out)

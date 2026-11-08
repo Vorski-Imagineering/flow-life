@@ -562,7 +562,46 @@ class PreCommit(Tmp):
         os.symlink(elsewhere.name, self.root / "nas")
         os.symlink("../nas/x.md", self.root / "visa/ref.md")
         self.git("add", "visa/ref.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("symlink visa/ref.md -> ../nas/x.md: broken", out)
+
+    def test_link_back_through_an_untracked_symlink(self):
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        (Path(elsewhere.name) / "sub").mkdir()
+        (Path(elsewhere.name) / "x.md").write_text("x")
+        self.base()
+        self.write("x.md", "In the folder.\n")
+        self.git("add", "x.md")
+        self.assertEqual(self.commit()[0], 0)
+        os.symlink(Path(elsewhere.name) / "sub", self.root / "nas")
+        os.symlink("../nas/../x.md", self.root / "visa/ref.md")
+        self.git("add", "visa/ref.md")
         self.assertNotEqual(self.commit()[0], 0)
+
+    def test_missing_path_map_blob_is_a_stand_in(self):
+        self.base()
+        self.git("update-index", "--cacheinfo",
+                 "100644,1234567890123456789012345678901234567890,docs/path-map.md")
+        r = self.run_check("--staged")
+        self.assertNotEqual(r.returncode, 2, r.stdout + r.stderr)
+
+    def test_promisor_remote_counts_as_partial_clone(self):
+        self.base()
+        self.git("config", "remote.origin.promisor", "true")
+        self.assertTrue(check_repo._partial_clone(self.root))
+
+    def test_folder_name_starting_with_a_space(self):
+        outer = tempfile.TemporaryDirectory()
+        self.addCleanup(outer.cleanup)
+        top = Path(outer.name)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(top)], check=True)
+        folder = top / " papers"
+        quiet(scaffold.main, ["init", "--dir", str(folder), "--areas", "visa"])
+        (folder / "visa/draft.md").write_text("Draft.\n")
+        subprocess.run(["git", "add", "-N", "visa/draft.md"], cwd=folder, check=True)
+        self.assertNotIn("visa/draft.md", check_repo.staged_files(flowconfig.load(folder)))
 
     def test_prefix_not_utf8_is_not_a_traceback(self):
         outer = tempfile.TemporaryDirectory()
