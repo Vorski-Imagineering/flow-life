@@ -18,7 +18,7 @@ else, read the PDF as usual and write nothing.
      from the summary. Open the PDF only when the question needs something the summary
      lacks, and then add what was missing to the summary.
    - Exit 1 (`none`) or 3 (`stale`): go on. `stale` means the PDF changed since it was
-     summarised, so the old summary is not to be trusted.
+     summarised (or the stamp line is damaged), so the old summary is not to be trusted.
    - Exit 4 (`foreign`): a file with that name already exists and is not a summary (the
      owner's own note beside an exported PDF). Never overwrite it: read the PDF, answer
      from it, and say no summary was written because the name is taken.
