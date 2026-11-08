@@ -20,7 +20,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/wrap_up.py"
 
 It reads only and fetches nothing. Show **every** row, clean ones too: a silent check cannot
 be told from a skipped one. `OPEN` is something left; `INFO` is named and never blocks.
-"Unpushed" is relative to the last fetch. Exit 2 means this is not a flow-life folder.
+"Unpushed" is relative to the last fetch. `unpushed` and `stash` cover the whole git
+repository, so in a folder inside a larger repository they may name work that is not this folder's. Exit 2 means this is not a flow-life folder.
 
 **Separate this session's work from what was already there.** The opening status report
 gave a count of uncommitted paths; no such line means the folder was clean. Anything
