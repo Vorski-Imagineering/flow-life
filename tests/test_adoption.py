@@ -644,6 +644,13 @@ class PreCommit(Tmp):
         self.git("config", "remote.b.promisor", "2")
         self.assertTrue(check_repo._partial_clone(self.root))
 
+    def test_promisor_remote_named_with_bytes_not_utf8(self):
+        self.base()
+        git_dir = Path(self.git("rev-parse", "--absolute-git-dir").stdout.strip())
+        with open(git_dir / "config", "ab") as f:
+            f.write(b'[remote "caf\xe9"]\n\tpromisor = true\n')
+        self.assertTrue(check_repo._partial_clone(self.root))
+
     def test_promisor_remote_with_a_space_in_its_name(self):
         self.base()
         self.git("config", "remote.my remote.promisor", "true")
