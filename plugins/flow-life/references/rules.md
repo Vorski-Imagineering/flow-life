@@ -151,3 +151,6 @@ edits or deletions of records. It fails when a document is not in the register, 
 not in the log, the identifiers file or an email is readable by others (`--fix-modes`
 repairs), an identifier appears where it must not, a status block is invalid, or a path
 reference does not resolve. Fix the cause; never bypass with `--no-verify`.
+
+The hook judges what is being committed, not other files on disk; running the check by
+hand, or `/flow-life:status`, reads the files on disk.

@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """One check for everything the flow-life storage rules require.
 
-    check_repo.py [--fix-modes]
+    check_repo.py [--fix-modes] [--staged]
 
 Run before every commit (the pre-commit hook does). Exit 1 on any problem.
 `--fix-modes` first makes the identifiers file and the email archives owner-only.
 Works in a git repository (tracked and untracked-but-not-ignored files) or in a
 plain folder (every file, skipping .git/ and tmp/).
+
+`--staged` judges the index (what is being committed) in a copy under the git
+directory; the pre-commit hook uses it. Without it, the working tree is checked.
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -134,7 +141,7 @@ def _read(cfg, rel, problems):
     return p.read_text()
 
 
-def check_all(cfg):
+def check_all(cfg, modes=True):
     files = repo_files(cfg.root)
     problems = []
     register = _read(cfg, cfg.register, problems)
@@ -144,19 +151,258 @@ def check_all(cfg):
     return (problems
             + check_register(cfg, files, register)
             + check_email_log(cfg, files, log)
-            + check_modes(cfg, files)
+            + (check_modes(cfg, files) if modes else [])
             + check_identifiers(cfg, files, ids)
             + check_status(cfg)
             + [f"links: {p}" for p in pathmap.check(cfg)])
 
 
+STAGED_PREFIX = "flow-life-staged-"
+
+
+def _git(root, *args, **kw):
+    """git in the folder's root, with the inherited environment: during a commit git sets
+    GIT_INDEX_FILE (relative to the root) to the index being committed."""
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True, **kw)
+
+
+def _intent_to_add(root):
+    """Paths, relative to root, of intent-to-add entries (`git add -N`), whether or not
+    the file is still on disk: status shows them with no staged change (X is '.', in an
+    ordinary or a rename record) though HEAD does not have them. Read with
+    --no-optional-locks, so the index is not rewritten."""
+    out = os.fsdecode(_git(root, "--no-optional-locks", "status", "--porcelain=v2", "-z",
+                           "--untracked-files=no").stdout)
+    candidates, recs = set(), iter(out.split("\0"))
+    for rec in recs:
+        if rec.startswith("2 "):
+            next(recs, None)  # the rename's original path
+            if rec.startswith("2 ."):
+                candidates.add(rec.split(" ", 9)[9])
+        elif rec.startswith("1 ."):
+            candidates.add(rec.split(" ", 8)[8])
+    if not candidates:
+        return set()
+    born = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=root,
+                          capture_output=True).returncode == 0
+    in_head = (set(os.fsdecode(_git(root, "ls-tree", "-r", "--full-tree", "--name-only", "-z",
+                                    "HEAD").stdout).split("\0")) if born else set())
+    prefix = os.fsdecode(_git(root, "rev-parse", "--show-prefix").stdout).rstrip("\n")
+    return {p[len(prefix):] for p in candidates - in_head if p.startswith(prefix)}
+
+
+def staged_files(cfg):
+    """{path: (mode, blob)} of what the commit will contain, paths relative to the folder,
+    read from the index without writing to it. Submodules and intent-to-add entries are
+    left out."""
+    entries = {}
+    for rec in os.fsdecode(_git(cfg.root, "ls-files", "-s", "-z").stdout).split("\0"):
+        if not rec:
+            continue
+        meta, path = rec.split("\t", 1)
+        mode, sha = meta.split()[:2]
+        if mode != "160000":
+            entries[path] = (mode, sha)
+    for path in _intent_to_add(cfg.root):
+        entries.pop(path, None)
+    return entries
+
+
+def _partial_clone(root):
+    """True when git could fetch a missing object from a promisor remote."""
+    def config(*args):
+        return subprocess.run(["git", "config", *args], cwd=root, capture_output=True, text=True)
+    if config("--get", "extensions.partialClone").returncode == 0:
+        return True
+    # remote.<name>.promisor, matched on bytes here: a remote name need not be UTF-8, which
+    # git's regex (by locale) and a text decode both get wrong
+    names = subprocess.run(["git", "config", "-z", "--name-only", "--get-regexp", r"^remote\."],
+                           cwd=root, capture_output=True).stdout.split(b"\0")
+    # remote.promisor and remote..promisor count too: git fetches through them
+    keys = dict.fromkeys(os.fsdecode(n) for n in names if n.lower().endswith(b".promisor"))
+    # each read by git as a boolean, so one bad value fails only its own key
+    return any(config("--bool", "--get", key).stdout.strip() == "true" for key in keys)
+
+
+def _blobs(root, shas):
+    """{sha: bytes} read from the object store as stored: no attribute filter (smudge,
+    LFS) runs, and nothing is fetched. In a partial clone only objects already in the
+    store are asked for, whatever git's version. A blob not in the store is absent."""
+    shas = sorted(set(shas))
+    if shas and _partial_clone(root):
+        local = set(_git(root, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)",
+                         text=True).stdout.split())
+        shas = [s for s in shas if s in local]
+    blobs = {}
+    if not shas:
+        return blobs
+    out = _git(root, "cat-file", "--batch", input=("\n".join(shas) + "\n").encode(),
+               env=dict(os.environ, GIT_NO_LAZY_FETCH="1")).stdout
+    i = 0
+    while i < len(out):
+        nl = out.index(b"\n", i)
+        head = out[i:nl].decode().split()
+        if len(head) < 3:  # "<sha> missing"
+            i = nl + 1
+            continue
+        size = int(head[2])
+        blobs[head[0]] = out[nl + 1:nl + 1 + size]
+        i = nl + 1 + size + 1
+    return blobs
+
+
+def _within(path, root):
+    return os.path.commonpath([path, str(root)]) == str(root)
+
+
+def _resolve(cfg, dirs, path, target):
+    """Where the link at folder-relative `path` lands, as a clone of the commit would see
+    it: ("inside", folder-relative path) or ("outside", real path). Outside the folder the
+    disk decides; inside, the walk stops at a name that is not one of the commit's
+    folders (`dirs`), and the rest is kept as written, so the copy resolves it, through
+    any committed link, as the clone would."""
+    root = str(cfg.root)
+    cur = os.sep if os.path.isabs(target) else os.path.dirname(os.path.join(root, path))
+    pending = [x for x in Path(target).parts if x != os.sep]
+    while pending:
+        part = pending.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            cur = os.path.dirname(cur)
+            continue
+        nxt = os.path.join(cur, part)
+        if not _within(nxt, root):
+            if _within(root, nxt):  # on the way down to the folder
+                cur = nxt
+                continue
+            real = os.path.realpath(os.path.join(nxt, *pending))
+            return ("inside", os.path.relpath(real, root)) if _within(real, root) else ("outside", real)
+        rel = os.path.relpath(nxt, root)
+        if pending and rel != "." and rel not in dirs:  # not a folder of the commit: the copy decides
+            return "inside", os.path.join(rel, *pending)
+        cur = nxt
+    return ("inside", os.path.relpath(cur, root)) if _within(cur, root) else ("outside", cur)
+
+
+def _process_readme(path):
+    parts = Path(path).parts
+    return (len(parts) == 5 and parts[1] == "processes" and parts[2] in ("active", "closed")
+            and parts[4] == "README.md")
+
+
+def _contents(cfg, entries):
+    """{path: bytes} for the entries whose content the checks read: links, process
+    READMEs, the profile's own files and the text suffixes. One read of the store."""
+    suffixes = {s.lower() for s in cfg.link_text_suffixes | cfg.id_text_suffixes}
+    named = {cfg.register, cfg.email_log, cfg.identifiers, cfg.path_map, cfg.dashboard,
+             flowconfig.PROFILE}
+    real = {p for p, (mode, _) in entries.items()
+            if mode == "120000" or p in named or _process_readme(p)
+            or Path(p).suffix.lower() in suffixes}
+    blobs = _blobs(cfg.root, [entries[p][1] for p in real])
+    return {p: blobs[entries[p][1]] for p in real if entries[p][1] in blobs}
+
+
+def _dirs(entries):
+    return {str(parent) for p in entries for parent in Path(p).parents if str(parent) != "."}
+
+
+def _links(entries, contents):
+    return {p: os.fsdecode(contents[p]) for p, (mode, _) in entries.items()
+            if mode == "120000" and p in contents}
+
+
+@contextmanager
+def staged_copy(cfg, entries=None, contents=None):
+    """A copy of what is being committed, under the git directory, removed afterwards.
+    Text files the checks read keep their content; every other file, and a text file
+    whose blob is not in the store, is an empty stand-in, since the register and link
+    checks only need it to exist. A link is followed as a clone of the commit would
+    follow it: into the copy when it lands inside the folder, to the place on disk when
+    it lands outside and that exists; one that lands nowhere is left out (check_staged
+    reports it). Stops, exit 2, when the profile, register, email log or identifiers
+    file is not in the object store."""
+    git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
+    for old in git_dir.glob(STAGED_PREFIX + "*"):
+        shutil.rmtree(old, ignore_errors=True)
+    dest = Path(tempfile.mkdtemp(prefix=STAGED_PREFIX, dir=git_dir))
+    try:
+        entries = staged_files(cfg) if entries is None else entries
+        contents = _contents(cfg, entries) if contents is None else contents
+        read = {cfg.register, cfg.email_log, cfg.identifiers, flowconfig.PROFILE}
+        links, dirs = _links(entries, contents), _dirs(entries)
+        for p, (mode, _) in entries.items():
+            out = dest / p
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if p in read and p not in contents:
+                print(f"flow-life: {p} is not in the object store, so the commit cannot be "
+                      "checked", file=sys.stderr)
+                sys.exit(2)
+            if p in links:
+                where, place = _resolve(cfg, dirs, p, links[p])
+                if where == "inside":
+                    # not normalised: a name the clone lacks must stop the walk here too
+                    os.symlink(os.path.join(os.path.relpath(dest, out.parent), place), out)
+                elif where == "outside" and os.path.exists(place):
+                    os.symlink(place, out)
+            elif p in contents:
+                out.write_bytes(contents[p])
+            else:
+                out.touch()
+        yield dest
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def check_staged(cfg, fix_modes=False):
+    """Problems in what is being committed. Modes are checked on the real files: git
+    does not keep them, so the copy's say nothing."""
+    entries = staged_files(cfg)
+    files = sorted(entries)
+    if fix_modes:
+        for f in private_files(cfg, files):
+            if (cfg.root / f).is_file():
+                os.chmod(cfg.root / f, 0o600)
+    contents = _contents(cfg, entries)
+    with staged_copy(cfg, entries, contents) as copy:
+        staged_profile = copy / flowconfig.PROFILE
+        if staged_profile.is_file():
+            path, shown = staged_profile, f"{flowconfig.PROFILE} (staged)"
+        else:
+            path = shown = cfg.profile_path
+        try:
+            ccfg = flowconfig.Config(copy, tomllib.loads(Path(path).read_text()), shown)
+        except tomllib.TOMLDecodeError as e:
+            print(f"flow-life: {shown}: {e}", file=sys.stderr)
+            sys.exit(2)
+        except flowconfig.ProfileError as e:
+            print(f"flow-life: {e}", file=sys.stderr)
+            sys.exit(2)
+        problems = check_all(ccfg, modes=False)
+    links, dirs = _links(entries, contents), _dirs(entries)
+    for p, target in links.items():
+        if p.split("/")[0] == "tmp":
+            continue
+        where, place = _resolve(cfg, dirs, p, target)
+        if where == "outside" and not os.path.exists(place):
+            problems.append(f"links: symlink {p} -> {target}: broken")
+    return problems + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()])
+
+
 if __name__ == "__main__":
     cfg = flowconfig.load_or_exit()
-    if "--fix-modes" in sys.argv:
-        for f in private_files(cfg, repo_files(cfg.root)):
-            os.chmod(cfg.root / f, 0o600)
-    problems = check_all(cfg)
+    if "--staged" in sys.argv:
+        if not is_git(cfg.root):
+            print("check_repo.py: --staged needs a git repository", file=sys.stderr)
+            sys.exit(2)
+        problems = check_staged(cfg, fix_modes="--fix-modes" in sys.argv)
+    else:
+        if "--fix-modes" in sys.argv:
+            for f in private_files(cfg, repo_files(cfg.root)):
+                os.chmod(cfg.root / f, 0o600)
+        problems = check_all(cfg)
     for p in problems:
-        print(p)
+        print(p.encode("utf-8", "surrogateescape").decode("utf-8", "replace"))
     print(f"{len(problems)} problem(s)", file=sys.stderr)
     sys.exit(1 if problems else 0)
