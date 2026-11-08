@@ -637,6 +637,13 @@ class PreCommit(Tmp):
         self.git("config", "remote.backup.promisor", "maybe")
         self.assertTrue(check_repo._partial_clone(self.root))
 
+    def test_promisor_values_read_as_git_reads_them(self):
+        self.base()
+        self.git("config", "remote.a.promisor", "")
+        self.assertFalse(check_repo._partial_clone(self.root))
+        self.git("config", "remote.b.promisor", "2")
+        self.assertTrue(check_repo._partial_clone(self.root))
+
     def test_relative_link_back_in_through_an_alias(self):
         alias = self.root.parent / f"{self.root.name}-alias"
         os.symlink(self.root, alias)
