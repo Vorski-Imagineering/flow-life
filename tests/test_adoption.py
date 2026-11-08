@@ -648,6 +648,9 @@ class PreCommit(Tmp):
         self.base()
         self.git("config", "remote.my remote.promisor", "true")
         self.assertTrue(check_repo._partial_clone(self.root))
+        self.git("config", "--unset", "remote.my remote.promisor")
+        self.git("config", "remote.my\u2028remote.promisor", "true")
+        self.assertTrue(check_repo._partial_clone(self.root))
 
     def test_relative_link_back_in_through_an_alias(self):
         alias = self.root.parent / f"{self.root.name}-alias"
