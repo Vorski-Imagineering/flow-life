@@ -584,13 +584,58 @@ class PreCommit(Tmp):
         self.base()
         self.git("update-index", "--cacheinfo",
                  "100644,1234567890123456789012345678901234567890,docs/path-map.md")
+        self.assertIn("1234567890123456789012345678901234567890",
+                      self.git("ls-files", "-s", "docs/path-map.md").stdout)
         r = self.run_check("--staged")
         self.assertNotEqual(r.returncode, 2, r.stdout + r.stderr)
 
     def test_promisor_remote_counts_as_partial_clone(self):
         self.base()
-        self.git("config", "remote.origin.promisor", "true")
+        self.git("config", "remote.origin.promisor", "yes")
         self.assertTrue(check_repo._partial_clone(self.root))
+        real = self.git("rev-parse", ":README.md").stdout.strip()
+        fake = "1234567890123456789012345678901234567890"
+        asked = []
+        git = check_repo._git
+        def spy(root, *args, **kw):
+            if args[:2] == ("cat-file", "--batch"):
+                asked.append(kw["input"].decode())
+            return git(root, *args, **kw)
+        check_repo._git = spy
+        self.addCleanup(setattr, check_repo, "_git", git)
+        self.assertEqual(set(check_repo._blobs(self.root, [real, fake])), {real})
+        self.assertNotIn(fake, "".join(asked))
+
+    def test_relative_link_back_in_through_an_alias(self):
+        alias = self.root.parent / f"{self.root.name}-alias"
+        os.symlink(self.root, alias)
+        self.addCleanup(alias.unlink)
+        self.base()
+        self.write("visa/draft.md", "Not added yet.\n")
+        os.symlink(f"../../{alias.name}/visa/draft.md", self.root / "visa/ref.md")
+        self.git("add", "visa/ref.md")
+        self.assertNotEqual(self.commit()[0], 0)
+
+    def test_link_through_a_tracked_link_then_up(self):
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        top = Path(elsewhere.name)
+        (top / "share/sub").mkdir(parents=True)
+        (top / "y.md").write_text("y")
+        self.base()
+        os.symlink(top / "share/sub", self.root / "nas")
+        os.symlink("../nas/../../y.md", self.root / "visa/ref.md")
+        self.git("add", "nas", "visa/ref.md")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_link_back_in_by_the_folder_own_name(self):
+        self.base()
+        self.write("visa/draft.md", "Staged.\n")
+        os.symlink(f"../../{self.root.name}/visa/draft.md", self.root / "visa/ref.md")
+        self.git("add", "visa/draft.md", "visa/ref.md")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
 
     def test_folder_name_starting_with_a_space(self):
         outer = tempfile.TemporaryDirectory()
