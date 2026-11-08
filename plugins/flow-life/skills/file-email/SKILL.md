@@ -19,7 +19,8 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/rules.md` (Correspondence) first.
    files with `.metadata.json` sidecars and never changes an existing record.
    A record is never edited afterwards; a correction is a new note in the process README.
 4. **Attachments that are evidence** (a certificate, a decision) go in `documents/<type>/`
-   with a register row; others go in the process's `attachments/`.
+   with a register row; others go in the process's `attachments/`. Then `/flow-life:read-pdf`
+   makes the summary of a PDF kept under `documents/` or `attachments/`.
 5. **Log it**: a row in the email log with date, direction, subject (exact), attachments,
    delivery or response status, and the record's root-relative path.
 6. **Update the process**: status block (`waiting` after sending; `active` when a reply

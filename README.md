@@ -74,6 +74,7 @@ folder without a `.agents/flow-life.toml`.
 | `close-process` | record the outcome and move it to `closed/` |
 | `file-email` | keep an email exactly, in the right process, logged |
 | `register-document` | add or replace a document; record expiry and use |
+| `read-pdf` | summarise a PDF once, beside it, and reuse the summary |
 | `move` | move files and keep every reference working |
 | `reference` | keep what was learned, sourced and dated |
 

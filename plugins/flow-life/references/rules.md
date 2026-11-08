@@ -77,6 +77,8 @@ To close one: fill in the block (`Closed`, `Outcome`), move the folder from
   or process: every body asks for the same papers.
 - Every new, replaced or sent document updates the register: current file,
   issued, expiry, superseded copies (kept, not deleted), where it was used, derived copies.
+- A PDF that is read gets a Markdown summary beside it (`/flow-life:read-pdf`); later reads use
+  the summary while its recorded hash matches the PDF.
 - A document that goes stale (a certificate valid 3 months, an expiring card) also appears
   in the dashboard's "Expiring or stale documents" with its date.
 - A document kept in another system is a register row with its link. Anything sent to a

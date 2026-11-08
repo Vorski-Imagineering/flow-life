@@ -894,7 +894,101 @@ class Report(Tmp):
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
 
+class PdfSummary(Tmp):
+    SCRIPT = PLUGIN / "scripts/pdf_summary.py"
+
+    def run_script(self, *args):
+        return subprocess.run([sys.executable, str(self.SCRIPT), *args], capture_output=True, text=True)
+
+    def files(self):
+        return sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file())
+
+    def test_status_none_current_stale(self):
+        pdf = self.root / "a.pdf"
+        pdf.write_bytes(b"x")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (1, "none"))
+        summary = self.root / "a.md"
+        summary.write_text(self.run_script("stamp", str(pdf)).stdout.strip() + "\n\nA summary.\n")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, str(summary)))
+        pdf.write_bytes(b"changed")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (3, "stale"))
+        summary.write_text("<!-- flow-life:pdf-summary sha256=" + "0" * 64 + " -->\n")
+        self.assertEqual(self.run_script("status", str(pdf)).returncode, 3)
+
+    def test_a_mangled_stamp_is_stale_not_foreign(self):
+        pdf = self.root / "a.pdf"
+        pdf.write_bytes(b"x")
+        (self.root / "a.md").write_text("<!-- flow-life:pdf-summary sha256=oops -->\nA summary.\n")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (3, "stale"))
+
+    def test_other_flow_life_markers_are_foreign_not_stale(self):
+        pdf = self.root / "a.pdf"
+        pdf.write_bytes(b"x")
+        (self.root / "a.md").write_text("<!-- flow-life:pdf-summary-index sha256=oops -->\n")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (4, "foreign"))
+        (self.root / "a.md").write_text("<!-- flow-life:pdf-summary sha256=ABC -->\n")
+        self.assertEqual(self.run_script("status", str(pdf)).returncode, 3)
+
+    def test_a_file_that_is_not_a_summary_is_foreign(self):
+        pdf = self.root / "letter.pdf"
+        pdf.write_bytes(b"x")
+        (self.root / "letter.md").write_text("The owner's own letter, not a summary.\n")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (4, "foreign"))
+
+    def test_stamp_is_sha256_of_the_pdf(self):
+        import hashlib
+        pdf = self.root / "a.pdf"
+        pdf.write_bytes(b"some bytes")
+        digest = hashlib.sha256(b"some bytes").hexdigest()
+        self.assertEqual(self.run_script("stamp", str(pdf)).stdout.strip(),
+                         f"<!-- flow-life:pdf-summary sha256={digest} -->")
+
+    def test_missing_pdf_exits_2(self):
+        for cmd in ("status", "stamp"):
+            r = self.run_script(cmd, str(self.root / "none.pdf"))
+            self.assertEqual(r.returncode, 2)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_script_writes_nothing(self):
+        (self.root / "a.pdf").write_bytes(b"x")
+        before = self.files()
+        self.run_script("status", str(self.root / "a.pdf"))
+        self.run_script("stamp", str(self.root / "a.pdf"))
+        self.assertEqual(self.files(), before)
+
+    def test_summary_beside_a_document_passes_the_check(self):
+        cfg = self.init()
+        details = self.root / "personal-details.md"
+        details.write_text(details.read_text() + "| Passport | `XY1234567` |\n")
+        (self.root / "documents/tax").mkdir()
+        pdf = self.root / "documents/tax/a.pdf"
+        pdf.write_bytes(b"x")
+        stamp = self.run_script("stamp", str(pdf)).stdout.strip()
+        (self.root / "documents/tax/a.md").write_text(stamp + "\n\nPassport XY1234567.\n")
+        reg = self.root / "documents/register.md"
+        reg.write_text(reg.read_text() + "| a | b | `documents/tax/a.pdf` | | | | | |\n")
+        self.assertTrue(any("a.md is not listed" in p for p in check_repo.check_all(cfg)))
+        reg.write_text(reg.read_text() + "| a summary | b | `documents/tax/a.md` | | | | | |\n")
+        self.assertEqual(check_repo.check_all(cfg), [])
+
+
 class Manifests(unittest.TestCase):
+    def test_read_pdf_skill_is_named_where_pdfs_are_placed(self):
+        skill = (PLUGIN / "skills/read-pdf/SKILL.md").read_text()
+        self.assertTrue(skill.startswith("---\nname: read-pdf\n"))
+        for word in ("foreign", "immutable_dirs", ".agents/flow-life.toml"):
+            self.assertIn(word, skill)
+        for rel in ("references/rules.md", "skills/register-document/SKILL.md",
+                    "skills/file-email/SKILL.md", "skills/move/SKILL.md"):
+            self.assertIn("read-pdf", (PLUGIN / rel).read_text(), rel)
+        self.assertIn("read-pdf", (PLUGIN.parents[1] / "README.md").read_text())
+
     def test_claude_md_says_where_the_plugin_runs_from(self):
         text = (PLUGIN.parents[1] / "CLAUDE.md").read_text()
         self.assertIn("## Running the plugin while developing", text)
