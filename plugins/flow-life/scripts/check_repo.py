@@ -166,10 +166,26 @@ def _git(root, *args, **kw):
     return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True, **kw)
 
 
+def _intent_to_add(root):
+    """Paths, relative to root, of intent-to-add entries (`git add -N`), whether or not
+    the file is still on disk: status shows them with no staged change (X is '.') though
+    HEAD does not have them. Read with --no-optional-locks, so the index is not rewritten."""
+    out = _git(root, "--no-optional-locks", "status", "--porcelain=v2", "-z",
+               "--untracked-files=no").stdout.decode()
+    candidates = {rec.split(" ", 8)[8] for rec in out.split("\0") if rec.startswith("1 .")}
+    if not candidates:
+        return set()
+    born = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=root,
+                          capture_output=True).returncode == 0
+    in_head = (set(_git(root, "ls-tree", "-r", "--full-tree", "--name-only", "-z", "HEAD")
+                   .stdout.decode().split("\0")) if born else set())
+    prefix = _git(root, "rev-parse", "--show-prefix", text=True).stdout.strip()
+    return {p[len(prefix):] for p in candidates - in_head if p.startswith(prefix)}
+
+
 def staged_files(cfg):
     """{path: mode} of what the commit will contain, read from the index without writing
-    to it. Submodules are left out, and so are intent-to-add entries (`git add -N`), which
-    `git diff-files` lists as added."""
+    to it. Submodules and intent-to-add entries are left out."""
     entries = {}
     for rec in _git(cfg.root, "ls-files", "-s", "-z").stdout.decode().split("\0"):
         if not rec:
@@ -178,17 +194,18 @@ def staged_files(cfg):
         mode = meta.split()[0]
         if mode != "160000":
             entries[path] = mode
-    added = _git(cfg.root, "diff-files", "--name-only", "--diff-filter=A", "--relative", "-z")
-    for path in added.stdout.decode().split("\0"):
+    for path in _intent_to_add(cfg.root):
         entries.pop(path, None)
     return entries
 
 
 @contextmanager
-def staged_copy(cfg, entries=None):
+def staged_copy(cfg, entries=None, redirected=None):
     """A copy of the index under the git directory, removed afterwards. Text files the
     checks read keep their content; every other file is an empty stand-in, since the
-    register and link checks only need it to exist."""
+    register and link checks only need it to exist. A link out of the folder is pointed
+    where it points on disk; `redirected`, when given, gets {path: (new target, committed
+    target)} for each."""
     git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
     for old in git_dir.glob(STAGED_PREFIX + "*"):
         shutil.rmtree(old, ignore_errors=True)
@@ -212,8 +229,11 @@ def staged_copy(cfg, entries=None):
         for p in (p for p, mode in entries.items() if mode == "120000" and (dest / p).is_symlink()):
             target = os.path.normpath(os.path.join(cfg.root, os.path.dirname(p), os.readlink(dest / p)))
             if os.path.commonpath([target, str(cfg.root)]) != str(cfg.root):
+                committed = os.readlink(dest / p)
                 (dest / p).unlink()
                 os.symlink(target, dest / p)
+                if redirected is not None:
+                    redirected[p] = (target, committed)
         yield dest
     finally:
         shutil.rmtree(dest, ignore_errors=True)
@@ -228,7 +248,8 @@ def check_staged(cfg, fix_modes=False):
         for f in private_files(cfg, files):
             if (cfg.root / f).is_file():
                 os.chmod(cfg.root / f, 0o600)
-    with staged_copy(cfg, entries) as copy:
+    redirected = {}
+    with staged_copy(cfg, entries, redirected) as copy:
         staged_profile = copy / flowconfig.PROFILE
         if staged_profile.is_file():
             path, shown = staged_profile, f"{flowconfig.PROFILE} (staged)"
@@ -244,11 +265,10 @@ def check_staged(cfg, fix_modes=False):
             sys.exit(2)
         problems = check_all(ccfg, modes=False)
     # A redirected link is reported with the target it was committed with.
-    for i, prob in enumerate(problems):
-        m = re.fullmatch(r"links: symlink (.+) -> (/.*): broken", prob)
-        if m and entries.get(m[1]) == "120000":
-            committed = _git(cfg.root, "cat-file", "blob", f":./{m[1]}", text=True).stdout
-            problems[i] = f"links: symlink {m[1]} -> {committed}: broken"
+    for p, (target, committed) in redirected.items():
+        problems = [f"links: symlink {p} -> {committed}: broken"
+                    if prob == f"links: symlink {p} -> {target}: broken" else prob
+                    for prob in problems]
     return problems + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()])
 
 

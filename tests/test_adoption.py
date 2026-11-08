@@ -410,12 +410,32 @@ class PreCommit(Tmp):
         self.assertEqual(code, 0, out)
 
     def test_missing_outside_target_is_broken_and_named_as_committed(self):
+        self.root = self.root / "folder"  # its parent is this test's own, with no config file
+        self.root.mkdir()
         self.base()
         os.symlink("../../config", self.root / "visa/cfg.md")
         self.git("add", "visa/cfg.md")
         code, out = self.commit()
         self.assertNotEqual(code, 0)
         self.assertIn("symlink visa/cfg.md -> ../../config: broken", out)
+
+    def test_deleted_intent_to_add_file_does_not_block(self):
+        self.base()
+        self.write("documents/tax/draft.pdf", "x")
+        self.git("add", "-N", "documents/tax/draft.pdf")
+        (self.root / "documents/tax/draft.pdf").unlink()
+        self.touch_readme()
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_deleted_staged_empty_file_still_counts(self):
+        self.base()
+        self.write("documents/tax/empty.pdf", "")
+        self.git("add", "documents/tax/empty.pdf")
+        (self.root / "documents/tax/empty.pdf").unlink()
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("empty.pdf is not listed", out)
 
     def test_intent_to_add_in_a_subfolder_repo(self):
         outer = tempfile.TemporaryDirectory()
