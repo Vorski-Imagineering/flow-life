@@ -13,6 +13,7 @@ class ReleaseWorkflow(unittest.TestCase):
         text = (ROOT / ".github/workflows/release.yml").read_text()
         for needed in ("workflow_run", "workflows: [tests]", "branches: [main]", "fetch-depth: 0",
                        "contents: write", "conclusion == 'success'", "event == 'push'",
+                       "ref: ${{ github.event.workflow_run.head_sha }}",
                        "tools/gogogo/release.py --profile .agents/dev-process.md tag --push origin"):
             self.assertIn(needed, text)
 

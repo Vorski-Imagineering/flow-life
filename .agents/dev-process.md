@@ -83,8 +83,8 @@ workspace = "checkout"
 reporter = "none"
 
 # deploy-<build> tags and <major>.0.<build> versions (references/versioning.md of the
-# gogogo plugin). Not cut yet: a release workflow after `tests` on each push to main is
-# to call `release.py --profile .agents/dev-process.md tag --push origin`.
+# gogogo plugin), cut by .github/workflows/release.yml after `tests` passes on each push
+# to main, with the scripts copied to tools/gogogo/.
 [release]
 major = 1
 +++
