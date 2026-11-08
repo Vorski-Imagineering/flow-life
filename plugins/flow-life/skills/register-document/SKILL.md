@@ -29,6 +29,7 @@ The register is the profile's `register`, and documents go under its `documents_
 6. **Expiry**: if it expires or goes stale (a certificate valid for months, a card),
    update the dashboard's "Expiring or stale documents".
 7. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_repo.py"` → `0 problem(s)`; commit.
+   A PDF placed here is then read with `/flow-life:read-pdf`, which makes its summary.
 
 **Where it lives**: a local path, a link into another system, or both. Anything sent to a
 body keeps a copy in the folder as its current file (an export), with the link as its
