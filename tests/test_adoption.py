@@ -542,9 +542,49 @@ class PreCommit(Tmp):
         self.assertIn("documents/register.md", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
 
+    def test_skip_worktree_register_keeps_its_content(self):
+        self.base()
+        self.write("documents/tax/a.pdf", "x")
+        reg = self.root / "documents/register.md"
+        reg.write_text(reg.read_text() + "| a | b | `documents/tax/a.pdf` | | | | | |\n")
+        self.git("add", "-A")
+        self.assertEqual(self.commit()[0], 0)
+        self.git("update-index", "--skip-worktree", "documents/register.md")
+        self.touch_readme()
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_link_through_an_untracked_symlink_is_not_judged_by_disk(self):
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        (Path(elsewhere.name) / "x.md").write_text("x")
+        self.base()
+        os.symlink(elsewhere.name, self.root / "nas")
+        os.symlink("../nas/x.md", self.root / "visa/ref.md")
+        self.git("add", "visa/ref.md")
+        self.assertNotEqual(self.commit()[0], 0)
+
+    def test_prefix_not_utf8_is_not_a_traceback(self):
+        outer = tempfile.TemporaryDirectory()
+        self.addCleanup(outer.cleanup)
+        top = Path(outer.name)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(top)], check=True)
+        try:
+            folder = top / os.fsdecode(b"pap\xe9rs")
+            folder.mkdir()
+        except OSError:
+            self.skipTest("the file system refuses names that are not UTF-8")
+        quiet(scaffold.main, ["init", "--dir", str(folder), "--areas", "visa"])
+        (folder / "visa/draft.md").write_text("Draft.\n")
+        subprocess.run(["git", "add", "-N", "visa/draft.md"], cwd=folder, check=True)
+        self.assertNotIn("visa/draft.md", check_repo.staged_files(flowconfig.load(folder)))
+
     def test_file_name_not_utf8_is_not_a_traceback(self):
         self.base()
-        (self.root / os.fsdecode(b"visa/caf\xe9.md")).write_text("Fine.\n")
+        try:
+            (self.root / os.fsdecode(b"visa/caf\xe9.md")).write_text("Fine.\n")
+        except OSError:
+            self.skipTest("the file system refuses names that are not UTF-8")
         self.git("add", "-A")
         code, out = self.commit()
         self.assertNotIn("Traceback", out)

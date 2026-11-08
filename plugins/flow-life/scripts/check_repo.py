@@ -187,24 +187,22 @@ def _intent_to_add(root):
                           capture_output=True).returncode == 0
     in_head = (set(os.fsdecode(_git(root, "ls-tree", "-r", "--full-tree", "--name-only", "-z",
                                     "HEAD").stdout).split("\0")) if born else set())
-    prefix = _git(root, "rev-parse", "--show-prefix", text=True).stdout.strip()
+    prefix = os.fsdecode(_git(root, "rev-parse", "--show-prefix").stdout).strip()
     return {p[len(prefix):] for p in candidates - in_head if p.startswith(prefix)}
 
 
 def staged_files(cfg):
-    """{path: (mode, blob, skip)} of what the commit will contain, paths relative to the
-    folder, read from the index without writing to it. Submodules and intent-to-add
-    entries are left out; `skip` marks a skip-worktree entry (not on disk, and in a sparse
-    partial clone not in the object store either)."""
+    """{path: (mode, blob)} of what the commit will contain, paths relative to the folder,
+    read from the index without writing to it. Submodules and intent-to-add entries are
+    left out."""
     entries = {}
-    out = os.fsdecode(_git(cfg.root, "ls-files", "-s", "-t", "-z").stdout)
-    for rec in out.split("\0"):
+    for rec in os.fsdecode(_git(cfg.root, "ls-files", "-s", "-z").stdout).split("\0"):
         if not rec:
             continue
         meta, path = rec.split("\t", 1)
-        tag, mode, sha = meta.split()[:3]
+        mode, sha = meta.split()[:2]
         if mode != "160000":
-            entries[path] = (mode, sha, tag == "S")
+            entries[path] = (mode, sha)
     for path in _intent_to_add(cfg.root):
         entries.pop(path, None)
     return entries
@@ -212,13 +210,20 @@ def staged_files(cfg):
 
 def _blobs(root, shas):
     """{sha: bytes or None} read from the object store as stored: no attribute filter
-    (smudge, LFS) runs, and nothing is fetched (a blob not in the store is None)."""
+    (smudge, LFS) runs, and nothing is fetched. In a partial clone only objects already
+    in the store are asked for, whatever git's version; a blob not there is None."""
     shas = sorted(set(shas))
+    if shas and subprocess.run(["git", "config", "--get", "extensions.partialClone"],
+                               cwd=root, capture_output=True).returncode == 0:
+        local = set(_git(root, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)",
+                         text=True).stdout.split())
+        shas = [s for s in shas if s in local]
+    blobs = {}
     if not shas:
-        return {}
+        return blobs
     out = _git(root, "cat-file", "--batch", input=("\n".join(shas) + "\n").encode(),
                env=dict(os.environ, GIT_NO_LAZY_FETCH="1")).stdout
-    blobs, i = dict.fromkeys(shas), 0
+    i = 0
     while i < len(out):
         nl = out.index(b"\n", i)
         head = out[i:nl].decode().split()
@@ -231,22 +236,17 @@ def _blobs(root, shas):
     return blobs
 
 
-def _inside(cfg, target):
-    """The folder-relative path of an absolute link target inside the folder, else None."""
-    if not os.path.isabs(target):
-        return None
-    real = os.path.realpath(target)
-    return os.path.relpath(real, cfg.root) if _within(real, cfg.root) else None
-
-
-def _outside(cfg, path, target):
-    """Where a link at path points on disk, when that is outside the folder; else None."""
-    real = os.path.realpath(os.path.join(cfg.root, os.path.dirname(path), target))
-    return None if _within(real, cfg.root) else real
-
-
-def _within(real, root):
-    return os.path.commonpath([real, str(root)]) == str(root)
+def _place(cfg, path, target):
+    """Where the link at path points: ("inside", folder-relative path) or ("outside",
+    real path). Only the part of the target before it enters the folder is resolved, so
+    a symlink inside the folder that the commit may not contain decides nothing."""
+    lexical = os.path.normpath(os.path.join(cfg.root, os.path.dirname(path), target))
+    parts = Path(lexical).parts
+    for i in range(1, len(parts) + 1):
+        head = os.path.realpath(os.path.join(*parts[:i]))
+        if os.path.commonpath([head, str(cfg.root)]) == str(cfg.root):
+            return "inside", os.path.relpath(os.path.join(head, *parts[i:]), cfg.root)
+    return "outside", os.path.realpath(lexical)
 
 
 def _process_readme(path):
@@ -258,12 +258,12 @@ def _process_readme(path):
 @contextmanager
 def staged_copy(cfg, entries=None):
     """A copy of what is being committed, under the git directory, removed afterwards.
-    Text files the checks read keep their content; every other file, and every
-    skip-worktree entry, is an empty stand-in, since the register and link checks only
-    need it to exist. A link out of the folder points where it does on disk when its
+    Text files the checks read keep their content; every other file, and a text file
+    whose blob is not in the store, is an empty stand-in, since the register and link
+    checks only need it to exist. A link out of the folder points where it does on disk when its
     target exists, and is left out when it does not (check_staged reports it); an
-    absolute link into the folder points into the copy. Stops, exit 2, when a file the
-    checks must read is not in the object store."""
+    link into the folder points into the copy. Stops, exit 2, when a file the profile
+    names is not in the object store."""
     git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
     for old in git_dir.glob(STAGED_PREFIX + "*"):
         shutil.rmtree(old, ignore_errors=True)
@@ -273,11 +273,11 @@ def staged_copy(cfg, entries=None):
         suffixes = {s.lower() for s in cfg.link_text_suffixes | cfg.id_text_suffixes}
         named = {cfg.register, cfg.email_log, cfg.identifiers, cfg.path_map, cfg.dashboard,
                  flowconfig.PROFILE}
-        real = {p for p, (mode, _, skip) in entries.items() if not skip and (
-                mode == "120000" or p in named or _process_readme(p)
-                or Path(p).suffix.lower() in suffixes)}
+        real = {p for p, (mode, _) in entries.items()
+                if mode == "120000" or p in named or _process_readme(p)
+                or Path(p).suffix.lower() in suffixes}
         blobs = _blobs(cfg.root, [entries[p][1] for p in real])
-        for p, (mode, sha, _) in entries.items():
+        for p, (mode, sha) in entries.items():
             out = dest / p
             out.parent.mkdir(parents=True, exist_ok=True)
             content = blobs.get(sha) if p in real else None
@@ -288,14 +288,11 @@ def staged_copy(cfg, entries=None):
             if content is None:
                 out.touch()
             elif mode == "120000":
-                target = os.fsdecode(content)
-                inside, outside = _inside(cfg, target), _outside(cfg, p, target)
-                if inside is not None:
-                    os.symlink(os.path.relpath(dest / inside, out.parent), out)
-                elif outside is None:
-                    os.symlink(target, out)
-                elif os.path.exists(outside):
-                    os.symlink(outside, out)
+                where, place = _place(cfg, p, os.fsdecode(content))
+                if where == "inside":
+                    os.symlink(os.path.relpath(dest / place, out.parent), out)
+                elif os.path.exists(place):
+                    os.symlink(place, out)
             else:
                 out.write_bytes(content)
         yield dest
@@ -327,14 +324,14 @@ def check_staged(cfg, fix_modes=False):
             print(f"flow-life: {e}", file=sys.stderr)
             sys.exit(2)
         problems = check_all(ccfg, modes=False)
-    links = {p: sha for p, (mode, sha, skip) in entries.items() if mode == "120000" and not skip}
+    links = {p: sha for p, (mode, sha) in entries.items() if mode == "120000"}
     targets = _blobs(cfg.root, links.values())
     for p, sha in links.items():
-        if targets[sha] is None or p.split("/")[0] == "tmp":
+        if sha not in targets or p.split("/")[0] == "tmp":
             continue
         target = os.fsdecode(targets[sha])
-        outside = _outside(cfg, p, target)
-        if outside is not None and _inside(cfg, target) is None and not os.path.exists(outside):
+        where, place = _place(cfg, p, target)
+        if where == "outside" and not os.path.exists(place):
             problems.append(f"links: symlink {p} -> {target}: broken")
     return problems + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()])
 
