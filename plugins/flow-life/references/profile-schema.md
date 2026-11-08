@@ -40,5 +40,5 @@ Meanings, briefly:
 - `dashboard`, `deadlines_heading`, `expiring_heading`, `report_title`: what the session report reads and prints.
 - `immutable_dirs`: append-only folders (edit guard and pre-commit).
 - `id_allowed_files`, `id_allowed_prefixes`: extra places identifiers may appear.
-- `link_excluded_files`, `link_excluded_prefixes`, `link_excluded_dirs`, `link_text_suffixes`: what the link check skips (by file, by prefix from the root, by folder name at any depth; a name with `/` is refused) and reads.
+- `link_excluded_files`, `link_excluded_prefixes`, `link_excluded_dirs`, `link_text_suffixes`: what the link check skips (by file, by prefix from the root, by folder name at any depth) and reads.
 - `stale_patterns`: regular expressions for old names that must not reappear after a reorganisation.
