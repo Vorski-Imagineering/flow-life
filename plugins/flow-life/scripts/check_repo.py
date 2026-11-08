@@ -214,9 +214,9 @@ def _partial_clone(root):
         return subprocess.run(["git", "config", *args], cwd=root, capture_output=True, text=True)
     if config("--get", "extensions.partialClone").returncode == 0:
         return True
-    keys = config("--name-only", "--get-regexp", r"^remote\..*\.promisor$").stdout.split()
+    keys = config("--name-only", "--get-regexp", r"^remote\..*\.promisor$").stdout.splitlines()
     # each read by git as a boolean, so one bad value fails only its own key
-    return any(config("--type=bool", "--get", key).stdout.strip() == "true" for key in keys)
+    return any(config("--bool", "--get", key).stdout.strip() == "true" for key in dict.fromkeys(keys))
 
 
 def _blobs(root, shas):

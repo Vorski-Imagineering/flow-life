@@ -644,6 +644,11 @@ class PreCommit(Tmp):
         self.git("config", "remote.b.promisor", "2")
         self.assertTrue(check_repo._partial_clone(self.root))
 
+    def test_promisor_remote_with_a_space_in_its_name(self):
+        self.base()
+        self.git("config", "remote.my remote.promisor", "true")
+        self.assertTrue(check_repo._partial_clone(self.root))
+
     def test_relative_link_back_in_through_an_alias(self):
         alias = self.root.parent / f"{self.root.name}-alias"
         os.symlink(self.root, alias)
