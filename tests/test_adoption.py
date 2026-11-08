@@ -1136,7 +1136,7 @@ class WrapUp(Tmp):
         self.assertIn("visa/leak.md", out)
         self.assertNotIn("ZX9-4417-QQ", out)
 
-    def test_exits_2_outside_a_flow_life_folder(self):
+    def test_silent_exit_outside_a_flow_life_folder(self):
         code, out, err = self.run_wrap()
         self.assertEqual((code, out), (2, ""))
         self.assertIn("flow-life", err)
