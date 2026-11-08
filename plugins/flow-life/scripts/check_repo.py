@@ -214,10 +214,12 @@ def _partial_clone(root):
         return subprocess.run(["git", "config", *args], cwd=root, capture_output=True, text=True)
     if config("--get", "extensions.partialClone").returncode == 0:
         return True
-    # names as bytes, filtered here: git's regex "." does not match a byte that is not UTF-8
+    # remote.<name>.promisor, matched on bytes here: a remote name need not be UTF-8, which
+    # git's regex (by locale) and a text decode both get wrong
     names = subprocess.run(["git", "config", "-z", "--name-only", "--get-regexp", r"^remote\."],
                            cwd=root, capture_output=True).stdout.split(b"\0")
-    keys = dict.fromkeys(os.fsdecode(n) for n in names if n.lower().endswith(b".promisor"))
+    keys = dict.fromkeys(os.fsdecode(n) for n in names
+                         if n.lower().endswith(b".promisor") and n[len(b"remote."):-len(b".promisor")])
     # each read by git as a boolean, so one bad value fails only its own key
     return any(config("--bool", "--get", key).stdout.strip() == "true" for key in keys)
 
