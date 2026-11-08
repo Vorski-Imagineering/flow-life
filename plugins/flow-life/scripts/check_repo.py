@@ -214,8 +214,10 @@ def _partial_clone(root):
         return subprocess.run(["git", "config", *args], cwd=root, capture_output=True, text=True)
     if config("--get", "extensions.partialClone").returncode == 0:
         return True
-    lines = config("--type=bool", "--get-regexp", r"^remote\..*\.promisor$").stdout.splitlines()
-    return any(line.split()[1:] == ["true"] for line in lines)
+    lines = config("--get-regexp", r"^remote\..*\.promisor$").stdout.splitlines()
+    # git's true: no value, or true/yes/on/1 in any case
+    return any(len(line.split()) == 1 or line.split()[1].lower() in ("true", "yes", "on", "1")
+               for line in lines)
 
 
 def _blobs(root, shas):
@@ -256,7 +258,7 @@ def _resolve(cfg, dirs, path, target):
     folders (`dirs`), and the rest is kept as written, so the copy resolves it, through
     any committed link, as the clone would."""
     root = str(cfg.root)
-    cur = os.sep if os.path.isabs(target) else os.path.join(root, os.path.dirname(path))
+    cur = os.sep if os.path.isabs(target) else os.path.dirname(os.path.join(root, path))
     pending = [x for x in Path(target).parts if x != os.sep]
     while pending:
         part = pending.pop(0)
@@ -273,7 +275,7 @@ def _resolve(cfg, dirs, path, target):
             real = os.path.realpath(os.path.join(nxt, *pending))
             return ("inside", os.path.relpath(real, root)) if _within(real, root) else ("outside", real)
         rel = os.path.relpath(nxt, root)
-        if pending and rel not in dirs:  # not a folder of the commit: the copy decides
+        if pending and rel != "." and rel not in dirs:  # not a folder of the commit: the copy decides
             return "inside", os.path.join(rel, *pending)
         cur = nxt
     return ("inside", os.path.relpath(cur, root)) if _within(cur, root) else ("outside", cur)
@@ -340,7 +342,7 @@ def staged_copy(cfg, entries=None, contents=None):
                     os.symlink(os.path.join(os.path.relpath(dest, out.parent), place), out)
                 elif where == "outside" and os.path.exists(place):
                     os.symlink(place, out)
-            elif p in contents and mode != "120000":
+            elif p in contents:
                 out.write_bytes(contents[p])
             else:
                 out.touch()

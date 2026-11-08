@@ -606,6 +606,37 @@ class PreCommit(Tmp):
         self.assertEqual(set(check_repo._blobs(self.root, [real, fake])), {real})
         self.assertNotIn(fake, "".join(asked))
 
+    def test_top_level_link_out_of_the_folder(self):
+        self.root = self.root / "folder"
+        self.root.mkdir()
+        (self.root.parent / "sibling.md").write_text("x")
+        self.base()
+        os.symlink("../sibling.md", self.root / "ref.md")
+        os.symlink("../gone.md", self.root / "gone.md")
+        self.git("add", "ref.md")
+        self.assertEqual(self.commit()[0], 0)
+        self.git("add", "gone.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("symlink gone.md -> ../gone.md: broken", out)
+
+    def test_absolute_link_through_the_folder_and_up(self):
+        self.root = self.root / "folder"
+        self.root.mkdir()
+        (self.root.parent / "shared").mkdir()
+        (self.root.parent / "shared/x.md").write_text("x")
+        self.base()
+        os.symlink(f"{self.root}/../shared/x.md", self.root / "visa/ref.md")
+        self.git("add", "visa/ref.md")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_one_bad_promisor_value_does_not_hide_another(self):
+        self.base()
+        self.git("config", "remote.origin.promisor", "true")
+        self.git("config", "remote.backup.promisor", "maybe")
+        self.assertTrue(check_repo._partial_clone(self.root))
+
     def test_relative_link_back_in_through_an_alias(self):
         alias = self.root.parent / f"{self.root.name}-alias"
         os.symlink(self.root, alias)
