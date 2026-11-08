@@ -5,7 +5,8 @@
                                   and its first line carries the PDF's current SHA-256;
                                   exit 1 and `none` when there is no such file;
                                   exit 3 and `stale` when the file is a summary of another
-                                  version of the PDF (a stamp with a different hash);
+                                  version of the PDF (a stamp with a different hash, or a
+                                  mangled one that still starts `<!-- flow-life:pdf-summary sha256=`);
                                   exit 4 and `foreign` when the file exists but is not a
                                   summary at all (no stamp): never to be overwritten
     pdf_summary.py stamp <pdf>    print that first line for the PDF
@@ -40,7 +41,7 @@ def status(pdf):
     m = STAMP_RE.match(first)
     if not m:
         # a mangled stamp is still ours: stale, so the summary is refreshed, not kept forever
-        return (3, "stale") if first.startswith("<!-- flow-life:pdf-summary") else (4, "foreign")
+        return (3, "stale") if first.startswith(STAMP.split("{")[0]) else (4, "foreign")
     if m.group(1) != digest(pdf):
         return 3, "stale"
     return 0, str(summary)

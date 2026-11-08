@@ -925,6 +925,15 @@ class PdfSummary(Tmp):
         r = self.run_script("status", str(pdf))
         self.assertEqual((r.returncode, r.stdout.strip()), (3, "stale"))
 
+    def test_other_flow_life_markers_are_foreign_not_stale(self):
+        pdf = self.root / "a.pdf"
+        pdf.write_bytes(b"x")
+        (self.root / "a.md").write_text("<!-- flow-life:pdf-summary-index sha256=oops -->\n")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (4, "foreign"))
+        (self.root / "a.md").write_text("<!-- flow-life:pdf-summary sha256=ABC -->\n")
+        self.assertEqual(self.run_script("status", str(pdf)).returncode, 3)
+
     def test_a_file_that_is_not_a_summary_is_foreign(self):
         pdf = self.root / "letter.pdf"
         pdf.write_bytes(b"x")
