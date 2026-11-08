@@ -168,11 +168,17 @@ def _git(root, *args, **kw):
 
 def _intent_to_add(root):
     """Paths, relative to root, of intent-to-add entries (`git add -N`), whether or not
-    the file is still on disk: status shows them with no staged change (X is '.') though
-    HEAD does not have them. Read with --no-optional-locks, so the index is not rewritten."""
+    the file is still on disk: status shows them with no staged change (X is '.', in an
+    ordinary or a rename record) though HEAD does not have them. Read with
+    --no-optional-locks, so the index is not rewritten."""
     out = _git(root, "--no-optional-locks", "status", "--porcelain=v2", "-z",
                "--untracked-files=no").stdout.decode()
-    candidates = {rec.split(" ", 8)[8] for rec in out.split("\0") if rec.startswith("1 .")}
+    candidates = set()
+    for rec in out.split("\0"):
+        if rec.startswith("1 ."):
+            candidates.add(rec.split(" ", 8)[8])
+        elif rec.startswith("2 ."):
+            candidates.add(rec.split(" ", 9)[9])
     if not candidates:
         return set()
     born = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=root,
@@ -184,28 +190,51 @@ def _intent_to_add(root):
 
 
 def staged_files(cfg):
-    """{path: mode} of what the commit will contain, read from the index without writing
-    to it. Submodules and intent-to-add entries are left out."""
+    """{path: (mode, blob)} of what the commit will contain, paths relative to the folder,
+    read from the index without writing to it. Submodules and intent-to-add entries are
+    left out."""
     entries = {}
     for rec in _git(cfg.root, "ls-files", "-s", "-z").stdout.decode().split("\0"):
         if not rec:
             continue
         meta, path = rec.split("\t", 1)
-        mode = meta.split()[0]
+        mode, sha = meta.split()[:2]
         if mode != "160000":
-            entries[path] = mode
+            entries[path] = (mode, sha)
     for path in _intent_to_add(cfg.root):
         entries.pop(path, None)
     return entries
 
 
+def _blobs(root, shas):
+    """{sha: bytes} read from the object store as stored: no attribute filter (smudge,
+    LFS) runs, so nothing is fetched."""
+    shas = sorted(set(shas))
+    if not shas:
+        return {}
+    out = _git(root, "cat-file", "--batch", input=("\n".join(shas) + "\n").encode()).stdout
+    blobs, i = {}, 0
+    while i < len(out):
+        nl = out.index(b"\n", i)
+        sha, _, size = out[i:nl].decode().split()
+        blobs[sha] = out[nl + 1:nl + 1 + int(size)]
+        i = nl + 1 + int(size) + 1
+    return blobs
+
+
+def _outside(cfg, path, target):
+    """Where a link at path points on disk, when that is outside the folder; else None."""
+    real = os.path.normpath(os.path.join(cfg.root, os.path.dirname(path), target))
+    return real if os.path.commonpath([real, str(cfg.root)]) != str(cfg.root) else None
+
+
 @contextmanager
-def staged_copy(cfg, entries=None, redirected=None):
-    """A copy of the index under the git directory, removed afterwards. Text files the
-    checks read keep their content; every other file is an empty stand-in, since the
-    register and link checks only need it to exist. A link out of the folder is pointed
-    where it points on disk; `redirected`, when given, gets {path: (new target, committed
-    target)} for each."""
+def staged_copy(cfg, entries=None):
+    """A copy of what is being committed, under the git directory, removed afterwards.
+    Text files the checks read keep their content; every other file is an empty stand-in,
+    since the register and link checks only need it to exist. A link out of the folder is
+    an empty stand-in when its target exists, and left out when it does not (check_staged
+    reports it)."""
     git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
     for old in git_dir.glob(STAGED_PREFIX + "*"):
         shutil.rmtree(old, ignore_errors=True)
@@ -215,25 +244,24 @@ def staged_copy(cfg, entries=None, redirected=None):
         suffixes = {s.lower() for s in cfg.link_text_suffixes | cfg.id_text_suffixes}
         named = {cfg.register, cfg.email_log, cfg.identifiers, cfg.path_map, cfg.dashboard,
                  flowconfig.PROFILE}
-        real = [p for p, mode in entries.items()
-                if mode == "120000" or p in named or Path(p).suffix.lower() in suffixes]
-        if real:
-            _git(cfg.root, "checkout-index", "-z", "--stdin", f"--prefix={dest}/",
-                 input="\0".join(real).encode())
-        for p in set(entries) - set(real):
-            stand_in = dest / p
-            stand_in.parent.mkdir(parents=True, exist_ok=True)
-            stand_in.touch()
-        # A link out of the folder would resolve inside the git directory from the copy:
-        # point it where it points on disk.
-        for p in (p for p, mode in entries.items() if mode == "120000" and (dest / p).is_symlink()):
-            target = os.path.normpath(os.path.join(cfg.root, os.path.dirname(p), os.readlink(dest / p)))
-            if os.path.commonpath([target, str(cfg.root)]) != str(cfg.root):
-                committed = os.readlink(dest / p)
-                (dest / p).unlink()
-                os.symlink(target, dest / p)
-                if redirected is not None:
-                    redirected[p] = (target, committed)
+        real = {p for p, (mode, _) in entries.items()
+                if mode == "120000" or p in named or Path(p).name == "README.md"
+                or Path(p).suffix.lower() in suffixes}
+        blobs = _blobs(cfg.root, [entries[p][1] for p in real])
+        for p, (mode, sha) in entries.items():
+            out = dest / p
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if mode == "120000":
+                target = blobs[sha].decode()
+                outside = _outside(cfg, p, target)
+                if outside is None:
+                    os.symlink(target, out)
+                elif os.path.exists(outside):
+                    out.touch()
+            elif p in real:
+                out.write_bytes(blobs[sha])
+            else:
+                out.touch()
         yield dest
     finally:
         shutil.rmtree(dest, ignore_errors=True)
@@ -248,8 +276,7 @@ def check_staged(cfg, fix_modes=False):
         for f in private_files(cfg, files):
             if (cfg.root / f).is_file():
                 os.chmod(cfg.root / f, 0o600)
-    redirected = {}
-    with staged_copy(cfg, entries, redirected) as copy:
+    with staged_copy(cfg, entries) as copy:
         staged_profile = copy / flowconfig.PROFILE
         if staged_profile.is_file():
             path, shown = staged_profile, f"{flowconfig.PROFILE} (staged)"
@@ -264,11 +291,13 @@ def check_staged(cfg, fix_modes=False):
             print(f"flow-life: {e}", file=sys.stderr)
             sys.exit(2)
         problems = check_all(ccfg, modes=False)
-    # A redirected link is reported with the target it was committed with.
-    for p, (target, committed) in redirected.items():
-        problems = [f"links: symlink {p} -> {committed}: broken"
-                    if prob == f"links: symlink {p} -> {target}: broken" else prob
-                    for prob in problems]
+    links = {p: sha for p, (mode, sha) in entries.items() if mode == "120000"}
+    targets = _blobs(cfg.root, links.values())
+    for p, sha in links.items():
+        target = targets[sha].decode()
+        outside = _outside(cfg, p, target)
+        if outside is not None and not os.path.exists(outside):
+            problems.append(f"links: symlink {p} -> {target}: broken")
     return problems + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()])
 
 

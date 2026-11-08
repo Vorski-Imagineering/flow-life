@@ -419,6 +419,67 @@ class PreCommit(Tmp):
         self.assertNotEqual(code, 0)
         self.assertIn("symlink visa/cfg.md -> ../../config: broken", out)
 
+    def test_skip_worktree_entry_does_not_break_the_check(self):
+        self.base()
+        self.git("update-index", "--skip-worktree", "CLAUDE.md")
+        self.touch_readme()
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_intent_to_add_shown_as_rename_is_not_in_the_commit(self):
+        self.base()
+        self.write("visa/old.md", "Old.\n")
+        self.git("add", "visa/old.md")
+        self.assertEqual(self.commit()[0], 0)
+        (self.root / "visa/old.md").rename(self.root / "visa/new.md")
+        self.git("add", "-N", "visa/new.md")
+        self.write("visa/notes.md", "See `visa/new.md`.\n")
+        self.git("add", "visa/notes.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("unresolved visa/new.md", out)
+
+    def test_process_readme_keeps_its_content(self):
+        self.base()
+        prof = self.root / flowconfig.PROFILE
+        prof.write_text(prof.read_text() + 'link_text_suffixes = [".html"]\nid_text_suffixes = [".html"]\n')
+        self.write("visa/processes/active/2026-x/README.md",
+                   "- Status: active\n- Opened: 2026-01-01\n- Closed: —\n- Outcome: —\n- Next: wait\n")
+        self.git("add", "-A")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_no_attribute_filter_runs(self):
+        self.base()
+        marker = self.root.parent / f"{self.root.name}-smudged"
+        self.addCleanup(lambda: marker.exists() and marker.unlink())
+        self.git("config", "filter.probe.smudge", f"touch {marker}; cat")
+        self.write(".gitattributes", "*.md filter=probe\n")
+        self.write("visa/notes.md", "Fine.\n")
+        self.git("add", "-A")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        self.assertFalse(marker.exists())
+
+    def test_refusal_does_not_send_you_to_status(self):
+        self.base()
+        self.write("visa/notes.md", "See `visa/missing.md`.\n")
+        self.git("add", "visa/notes.md")
+        self.assertNotIn("/flow-life:status explains", self.commit()[1])
+
+    def test_staged_copy_in_a_subfolder_repo(self):
+        outer = tempfile.TemporaryDirectory()
+        self.addCleanup(outer.cleanup)
+        top = Path(outer.name)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(top)], check=True)
+        folder = top / "papers"
+        quiet(scaffold.main, ["init", "--dir", str(folder), "--areas", "visa"])
+        subprocess.run(["git", "add", "-A"], cwd=folder, check=True)
+        r = subprocess.run([sys.executable, str(PLUGIN / "scripts/check_repo.py"), "--staged"],
+                           cwd=folder, capture_output=True, text=True,
+                           env=dict(os.environ, FLOW_LIFE_ROOT=str(folder)))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     def test_deleted_intent_to_add_file_does_not_block(self):
         self.base()
         self.write("documents/tax/draft.pdf", "x")
