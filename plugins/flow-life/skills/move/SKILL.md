@@ -11,7 +11,8 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/rules.md` (Moving files) first.
    an append-only folder (`sent-emails/`, `received-emails/`, `portal-responses/`); a whole
    process folder may move.
 2. **Move** with `git mv` in a git folder (keeps history), otherwise a plain move. A PDF's
-   summary (`<name>.md` beside it, from `/flow-life:read-pdf`) moves with it.
+   summary (`<name>.md` beside it, from `/flow-life:read-pdf`) moves with it, with its register
+   row and path-map row.
 3. **Record** each move in the path map: `` | `old` | `new` | ``. End a folder's paths
    with `/`.
 4. **Rewrite and check:**

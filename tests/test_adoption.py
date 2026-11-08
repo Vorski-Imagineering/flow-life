@@ -918,6 +918,13 @@ class PdfSummary(Tmp):
         summary.write_text("<!-- flow-life:pdf-summary sha256=" + "0" * 64 + " -->\n")
         self.assertEqual(self.run_script("status", str(pdf)).returncode, 3)
 
+    def test_a_mangled_stamp_is_stale_not_foreign(self):
+        pdf = self.root / "a.pdf"
+        pdf.write_bytes(b"x")
+        (self.root / "a.md").write_text("<!-- flow-life:pdf-summary sha256=oops -->\nA summary.\n")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (3, "stale"))
+
     def test_a_file_that_is_not_a_summary_is_foreign(self):
         pdf = self.root / "letter.pdf"
         pdf.write_bytes(b"x")
@@ -966,6 +973,8 @@ class Manifests(unittest.TestCase):
     def test_read_pdf_skill_is_named_where_pdfs_are_placed(self):
         skill = (PLUGIN / "skills/read-pdf/SKILL.md").read_text()
         self.assertTrue(skill.startswith("---\nname: read-pdf\n"))
+        for word in ("foreign", "immutable_dirs", ".agents/flow-life.toml"):
+            self.assertIn(word, skill)
         for rel in ("references/rules.md", "skills/register-document/SKILL.md",
                     "skills/file-email/SKILL.md", "skills/move/SKILL.md"):
             self.assertIn("read-pdf", (PLUGIN / rel).read_text(), rel)

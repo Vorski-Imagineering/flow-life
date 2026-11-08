@@ -35,10 +35,12 @@ def status(pdf):
     summary = summary_path(pdf)
     if not summary.is_file():
         return 1, "none"
-    first = summary.read_text(errors="replace").split("\n", 1)[0]
+    with open(summary, errors="replace") as f:
+        first = f.readline()
     m = STAMP_RE.match(first)
     if not m:
-        return 4, "foreign"
+        # a mangled stamp is still ours: stale, so the summary is refreshed, not kept forever
+        return (3, "stale") if first.startswith("<!-- flow-life:pdf-summary") else (4, "foreign")
     if m.group(1) != digest(pdf):
         return 3, "stale"
     return 0, str(summary)
