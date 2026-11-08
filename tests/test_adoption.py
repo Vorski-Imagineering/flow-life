@@ -16,6 +16,7 @@ sys.path.insert(0, str(PLUGIN / "scripts"))
 import check_repo  # noqa: E402
 import flowconfig  # noqa: E402
 import guard_immutable  # noqa: E402
+import pdf_summary  # noqa: E402
 import scaffold  # noqa: E402
 import session_report  # noqa: E402
 import setup_check  # noqa: E402
@@ -978,6 +979,179 @@ class PdfSummary(Tmp):
         self.assertEqual(check_repo.check_all(cfg), [])
 
 
+class WrapUp(Tmp):
+    SCRIPT = PLUGIN / "scripts/wrap_up.py"
+
+    def git(self, *args, cwd=None):
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        r = subprocess.run(["git", *args], cwd=cwd or self.root, env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
+
+    def run_wrap(self, cwd=None):
+        r = subprocess.run([sys.executable, str(self.SCRIPT)], cwd=cwd or self.root,
+                           capture_output=True, text=True)
+        return r.returncode, r.stdout, r.stderr
+
+    def committed(self, *extra):
+        self.init("--git", *extra)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base")
+
+    def test_clean_folder_passes(self):
+        self.committed()
+        code, out, _ = self.run_wrap()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("OPEN", out)
+        self.assertEqual(out.splitlines()[-1], "wrap-up: 0 open")
+        self.assertIn("INFO unpushed: no upstream", out)
+
+    def test_uncommitted_is_open(self):
+        self.committed()
+        (self.root / "notes.md").write_text("x")
+        code, out, _ = self.run_wrap()
+        self.assertEqual(code, 1)
+        self.assertIn("OPEN uncommitted: 1 path(s)", out)
+        self.assertIn("?? notes.md", out)
+
+    def test_unpushed_counts_from_the_last_fetch(self):
+        bare = self.root / "bare.git"
+        work = self.root / "work"
+        self.git("init", "-q", "--bare", str(bare))
+        quiet(scaffold.main, ["init", "--dir", str(work), "--areas", "visa", "--git"])
+        self.git("add", "-A", cwd=work)
+        self.git("commit", "-qm", "base", cwd=work)
+        branch = self.git("rev-parse", "--abbrev-ref", "HEAD", cwd=work).stdout.strip()
+        self.git("remote", "add", "origin", str(bare), cwd=work)
+        self.git("push", "-q", "-u", "origin", "HEAD", cwd=work)
+        self.assertIn("PASS unpushed", self.run_wrap(work)[1])
+        (work / "a.md").write_text("x")
+        self.git("add", "-A", cwd=work)
+        self.git("commit", "-qm", "a", cwd=work)
+        self.assertIn("OPEN unpushed: 1 commit(s)", self.run_wrap(work)[1])
+        self.git("push", "-q", cwd=work)
+        other = self.root / "other"
+        self.git("clone", "-q", "-b", branch, str(bare), str(other))
+        (other / "b.md").write_text("y")
+        self.git("add", "-A", cwd=other)
+        self.git("commit", "-qm", "b", cwd=other)
+        self.git("push", "-q", cwd=other)
+        tracking = self.git("rev-parse", f"origin/{branch}", cwd=work).stdout
+        self.assertIn("PASS unpushed", self.run_wrap(work)[1])
+        self.assertEqual(self.git("rev-parse", f"origin/{branch}", cwd=work).stdout, tracking)  # no fetch
+
+    def test_stash_is_open(self):
+        self.committed()
+        (self.root / "README.md").write_text("changed\n")
+        self.git("stash")
+        code, out, _ = self.run_wrap()
+        self.assertEqual(code, 1)
+        self.assertIn("OPEN stash: 1 stash(es)", out)
+
+    def test_repo_check_and_process_problems_are_open(self):
+        self.committed()
+        (self.root / "documents").mkdir(exist_ok=True)
+        (self.root / "documents/letter.txt").write_text("x")
+        proc = self.root / "visa/processes/active/2026-x"
+        proc.mkdir(parents=True)
+        (proc / "README.md").write_text("- Status: nonsense\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "more")
+        code, out, _ = self.run_wrap()
+        self.assertEqual(code, 1)
+        self.assertIn("OPEN repo-check", out)
+        self.assertIn("documents/letter.txt", out)
+        self.assertIn("OPEN processes", out)
+        self.assertIn("visa/2026-x", out)
+
+    def test_pdf_summaries_are_info_only(self):
+        self.committed()
+        from_ = lambda rel: self.root / rel  # noqa: E731
+        for rel in ("visa/current.pdf", "visa/stale.pdf", "visa/none.pdf", "visa/foreign.pdf",
+                    "shared/correspondence/sent-emails/mail.pdf"):
+            from_(rel).parent.mkdir(parents=True, exist_ok=True)
+            from_(rel).write_bytes(rel.encode())
+        stamp = lambda rel: pdf_summary.STAMP.format(pdf_summary.digest(from_(rel)))  # noqa: E731
+        from_("visa/current.md").write_text(stamp("visa/current.pdf") + "\n\nA summary.\n")
+        from_("visa/stale.md").write_text(pdf_summary.STAMP.format("0" * 64) + "\n")
+        from_("visa/foreign.md").write_text("my own note\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "pdfs")
+        _, out, _ = self.run_wrap()
+        row = out[out.index("INFO pdf-summaries"):].split("INFO deadlines")[0].split("PASS deadlines")[0]
+        self.assertIn("3 of 4 PDF(s)", row)
+        for rel, state in (("visa/stale.pdf", "stale"), ("visa/none.pdf", "none"),
+                           ("visa/foreign.pdf", "foreign")):
+            self.assertIn(f"{rel} ({state})", row)
+        self.assertNotIn("current.pdf", row)
+        self.assertNotIn("mail.pdf", row)
+
+    def test_deadlines_overdue_and_within_a_week(self):
+        from datetime import timedelta
+        self.committed()
+        day = lambda n: (date.today() + timedelta(days=n)).isoformat()  # noqa: E731
+        (self.root / "README.md").write_text(
+            "## Next deadlines\n\n| Date | Area | What |\n|---|---|---|\n"
+            f"| {day(-1)} | Visa | renew |\n| {day(3)} | Tax | pay |\n| {day(30)} | Tax | file |\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "dates")
+        code, out, _ = self.run_wrap()
+        self.assertEqual(code, 0, out)
+        row = out[out.index("INFO deadlines"):]
+        self.assertIn("2 overdue or within 7 days", row)
+        self.assertIn("renew", row)
+        self.assertIn("pay", row)
+        self.assertNotIn("file", row)
+
+    def test_a_folder_inside_a_larger_repo_ignores_the_rest(self):
+        self.git("init", "-q")
+        sub = self.root / "sub"
+        quiet(scaffold.main, ["init", "--dir", str(sub), "--areas", "visa"])
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base")
+        (self.root / "outside.txt").write_text("x")
+        (sub / "naïve.md").write_text("x")
+        code, out, _ = self.run_wrap(sub)
+        self.assertIn("OPEN uncommitted: 1 path(s)", out)
+        self.assertIn("?? sub/naïve.md", out)
+        self.assertNotIn("outside.txt", out)
+
+    def test_not_a_git_folder(self):
+        self.init()
+        code, out, _ = self.run_wrap()
+        self.assertEqual(code, 0, out)
+        for name in ("uncommitted", "unpushed", "stash"):
+            self.assertIn(f"INFO {name}: not a git folder", out)
+
+    def test_reads_only(self):
+        self.committed()
+        (self.root / "notes.md").write_text("x")
+        os.utime(self.root / "README.md", (1, 1))  # a stale index entry git status would refresh
+
+        def snapshot():
+            return {p.relative_to(self.root).as_posix(): p.read_bytes()
+                    for p in self.root.rglob("*") if p.is_file()}
+        before = snapshot()
+        self.run_wrap()
+        self.assertEqual(snapshot(), before)
+
+    def test_no_identifier_value_in_the_output(self):
+        self.committed()
+        details = self.root / "personal-details.md"
+        details.write_text(details.read_text() + "| Number | ZX9-4417-QQ |\n")
+        (self.root / "visa/leak.md").write_text("see ZX9-4417-QQ\n")
+        code, out, _ = self.run_wrap()
+        self.assertEqual(code, 1)
+        self.assertIn("visa/leak.md", out)
+        self.assertNotIn("ZX9-4417-QQ", out)
+
+    def test_silent_exit_outside_a_flow_life_folder(self):
+        code, out, err = self.run_wrap()
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("flow-life", err)
+
+
 class Manifests(unittest.TestCase):
     def test_read_pdf_skill_is_named_where_pdfs_are_placed(self):
         skill = (PLUGIN / "skills/read-pdf/SKILL.md").read_text()
@@ -1001,6 +1175,14 @@ class Manifests(unittest.TestCase):
         for c in commands:
             script = re.search(r"scripts/(\S+?\.py)", c).group(1)
             self.assertTrue((PLUGIN / "scripts" / script).is_file(), c)
+
+    def test_wrap_up_is_listed_and_has_no_hook(self):
+        self.assertIn("`wrap-up`", (PLUGIN.parents[1] / "README.md").read_text())
+        skill = (PLUGIN / "skills/wrap-up/SKILL.md").read_text()
+        for words in ("**Not yet.**", "**Safe to close.**"):
+            self.assertIn(words, skill)
+        hooks = json.loads((PLUGIN / "hooks/hooks.json").read_text())["hooks"]
+        self.assertFalse({"Stop", "SessionEnd"} & set(hooks))
 
     def test_every_skill_has_frontmatter(self):
         skills = sorted((PLUGIN / "skills").glob("*/SKILL.md"))

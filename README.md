@@ -70,6 +70,7 @@ folder without a `.agents/flow-life.toml`.
 |---|---|
 | `setup` | start a folder, adopt an existing one, or re-check one |
 | `status` | where everything stands (reads only) |
+| `wrap-up` | before closing a session: what is left hanging, what was learned, one verdict (reads only) |
 | `new-process` | open a process with its status block and todo |
 | `close-process` | record the outcome and move it to `closed/` |
 | `file-email` | keep an email exactly, in the right process, logged |
