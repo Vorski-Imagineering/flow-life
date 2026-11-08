@@ -869,6 +869,11 @@ class Report(Tmp):
 
 
 class Manifests(unittest.TestCase):
+    def test_claude_md_says_where_the_plugin_runs_from(self):
+        text = (PLUGIN.parents[1] / "CLAUDE.md").read_text()
+        self.assertIn("## Running the plugin while developing", text)
+        self.assertIn("installed copy", text)
+
     def test_hook_scripts_exist(self):
         hooks = json.loads((PLUGIN / "hooks/hooks.json").read_text())
         commands = [h["command"] for groups in hooks["hooks"].values() for g in groups for h in g["hooks"]]
