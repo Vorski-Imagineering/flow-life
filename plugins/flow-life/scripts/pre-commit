@@ -17,6 +17,6 @@ if [ -n "$bad" ]; then
 fi
 
 cd "$root" && python3 "$here/check_repo.py" --fix-modes --staged || {
-  echo "pre-commit: fix the problems above in what you are committing (/flow-life:status reads the files on disk)" >&2
+  echo "pre-commit: fix the problems above (/flow-life:status explains them)" >&2
   exit 1
 }

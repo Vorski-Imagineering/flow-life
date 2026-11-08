@@ -173,12 +173,14 @@ def _intent_to_add(root):
     --no-optional-locks, so the index is not rewritten."""
     out = _git(root, "--no-optional-locks", "status", "--porcelain=v2", "-z",
                "--untracked-files=no").stdout.decode()
-    candidates = set()
-    for rec in out.split("\0"):
-        if rec.startswith("1 ."):
+    candidates, recs = set(), iter(out.split("\0"))
+    for rec in recs:
+        if rec.startswith("2 "):
+            next(recs, None)  # the rename's original path
+            if rec.startswith("2 ."):
+                candidates.add(rec.split(" ", 9)[9])
+        elif rec.startswith("1 ."):
             candidates.add(rec.split(" ", 8)[8])
-        elif rec.startswith("2 ."):
-            candidates.add(rec.split(" ", 9)[9])
     if not candidates:
         return set()
     born = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=root,
@@ -208,18 +210,30 @@ def staged_files(cfg):
 
 def _blobs(root, shas):
     """{sha: bytes} read from the object store as stored: no attribute filter (smudge,
-    LFS) runs, so nothing is fetched."""
+    LFS) runs, and a partial clone does not fetch (a blob not in the store reads empty)."""
     shas = sorted(set(shas))
     if not shas:
         return {}
-    out = _git(root, "cat-file", "--batch", input=("\n".join(shas) + "\n").encode()).stdout
-    blobs, i = {}, 0
+    out = _git(root, "cat-file", "--batch", input=("\n".join(shas) + "\n").encode(),
+               env=dict(os.environ, GIT_NO_LAZY_FETCH="1")).stdout
+    blobs, i = {sha: b"" for sha in shas}, 0
     while i < len(out):
         nl = out.index(b"\n", i)
-        sha, _, size = out[i:nl].decode().split()
-        blobs[sha] = out[nl + 1:nl + 1 + int(size)]
-        i = nl + 1 + int(size) + 1
+        head = out[i:nl].decode().split()
+        if len(head) < 3:  # "<sha> missing"
+            i = nl + 1
+            continue
+        size = int(head[2])
+        blobs[head[0]] = out[nl + 1:nl + 1 + size]
+        i = nl + 1 + size + 1
     return blobs
+
+
+def _inside(cfg, target):
+    """The folder-relative path of an absolute link target inside the folder, else None."""
+    if os.path.isabs(target) and os.path.commonpath([target, str(cfg.root)]) == str(cfg.root):
+        return os.path.relpath(target, cfg.root)
+    return None
 
 
 def _outside(cfg, path, target):
@@ -228,13 +242,19 @@ def _outside(cfg, path, target):
     return real if os.path.commonpath([real, str(cfg.root)]) != str(cfg.root) else None
 
 
+def _process_readme(path):
+    parts = Path(path).parts
+    return (len(parts) == 5 and parts[1] == "processes" and parts[2] in ("active", "closed")
+            and parts[4] == "README.md")
+
+
 @contextmanager
 def staged_copy(cfg, entries=None):
     """A copy of what is being committed, under the git directory, removed afterwards.
     Text files the checks read keep their content; every other file is an empty stand-in,
-    since the register and link checks only need it to exist. A link out of the folder is
-    an empty stand-in when its target exists, and left out when it does not (check_staged
-    reports it)."""
+    since the register and link checks only need it to exist. A link out of the folder
+    points where it does on disk when its target exists, and is left out when it does not
+    (check_staged reports it); an absolute link into the folder points into the copy."""
     git_dir = Path(_git(cfg.root, "rev-parse", "--absolute-git-dir", text=True).stdout.strip())
     for old in git_dir.glob(STAGED_PREFIX + "*"):
         shutil.rmtree(old, ignore_errors=True)
@@ -245,19 +265,21 @@ def staged_copy(cfg, entries=None):
         named = {cfg.register, cfg.email_log, cfg.identifiers, cfg.path_map, cfg.dashboard,
                  flowconfig.PROFILE}
         real = {p for p, (mode, _) in entries.items()
-                if mode == "120000" or p in named or Path(p).name == "README.md"
+                if mode == "120000" or p in named or _process_readme(p)
                 or Path(p).suffix.lower() in suffixes}
         blobs = _blobs(cfg.root, [entries[p][1] for p in real])
         for p, (mode, sha) in entries.items():
             out = dest / p
             out.parent.mkdir(parents=True, exist_ok=True)
             if mode == "120000":
-                target = blobs[sha].decode()
-                outside = _outside(cfg, p, target)
-                if outside is None:
+                target = os.fsdecode(blobs[sha])
+                inside, outside = _inside(cfg, target), _outside(cfg, p, target)
+                if inside is not None:
+                    os.symlink(dest / inside, out)
+                elif outside is None:
                     os.symlink(target, out)
                 elif os.path.exists(outside):
-                    out.touch()
+                    os.symlink(outside, out)
             elif p in real:
                 out.write_bytes(blobs[sha])
             else:
@@ -294,9 +316,10 @@ def check_staged(cfg, fix_modes=False):
     links = {p: sha for p, (mode, sha) in entries.items() if mode == "120000"}
     targets = _blobs(cfg.root, links.values())
     for p, sha in links.items():
-        target = targets[sha].decode()
+        target = os.fsdecode(targets[sha])
         outside = _outside(cfg, p, target)
-        if outside is not None and not os.path.exists(outside):
+        if (outside is not None and not os.path.exists(outside)
+                and p.split("/")[0] not in ("tmp", ".git")):
             problems.append(f"links: symlink {p} -> {target}: broken")
     return problems + check_modes(cfg, [f for f in files if (cfg.root / f).is_file()])
 
@@ -314,6 +337,6 @@ if __name__ == "__main__":
                 os.chmod(cfg.root / f, 0o600)
         problems = check_all(cfg)
     for p in problems:
-        print(p)
+        print(p.encode("utf-8", "surrogateescape").decode("utf-8", "replace"))
     print(f"{len(problems)} problem(s)", file=sys.stderr)
     sys.exit(1 if problems else 0)

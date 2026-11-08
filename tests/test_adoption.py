@@ -461,12 +461,6 @@ class PreCommit(Tmp):
         self.assertEqual(code, 0, out)
         self.assertFalse(marker.exists())
 
-    def test_refusal_does_not_send_you_to_status(self):
-        self.base()
-        self.write("visa/notes.md", "See `visa/missing.md`.\n")
-        self.git("add", "visa/notes.md")
-        self.assertNotIn("/flow-life:status explains", self.commit()[1])
-
     def test_staged_copy_in_a_subfolder_repo(self):
         outer = tempfile.TemporaryDirectory()
         self.addCleanup(outer.cleanup)
@@ -479,6 +473,59 @@ class PreCommit(Tmp):
                            cwd=folder, capture_output=True, text=True,
                            env=dict(os.environ, FLOW_LIFE_ROOT=str(folder)))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_link_out_to_a_directory_can_be_linked_through(self):
+        self.root = self.root / "folder"
+        self.root.mkdir()
+        (self.root.parent / "shared").mkdir()
+        (self.root.parent / "shared/form.md").write_text("x")
+        self.base()
+        os.symlink("../../shared", self.root / "visa/shared")
+        self.write("visa/notes.md", "See `visa/shared/form.md`.\n")
+        self.git("add", "-A")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_broken_link_under_tmp_is_not_judged(self):
+        self.base()
+        (self.root / "tmp").mkdir()
+        os.symlink("../../gone", self.root / "tmp/ref")
+        self.git("add", "-f", "tmp/ref")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_missing_blob_is_not_a_traceback(self):
+        self.base()
+        self.git("update-index", "--add", "--info-only", "--cacheinfo",
+                 "100644,1234567890123456789012345678901234567890,visa/ghost.md")
+        r = self.run_check("--staged")
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_link_target_not_utf8_is_not_a_traceback(self):
+        self.base()
+        os.symlink(b"caf\xe9.md", bytes(self.root / "visa/odd.md"))
+        self.git("add", "visa/odd.md")
+        code, out = self.commit()
+        self.assertNotIn("Traceback", out)
+
+    def test_absolute_link_into_folder_needs_its_target_staged(self):
+        self.base()
+        self.write("visa/draft.md", "Not added yet.\n")
+        os.symlink(str(self.root / "visa/draft.md"), self.root / "visa/abs.md")
+        self.git("add", "visa/abs.md")
+        self.assertNotEqual(self.commit()[0], 0)
+
+    def test_rename_record_origin_is_not_read_as_a_record(self):
+        self.base()
+        self.write("1 . old.md", "Old.\n")
+        self.git("add", "1 . old.md")
+        self.assertEqual(self.commit()[0], 0)
+        (self.root / "1 . old.md").rename(self.root / "new.md")
+        self.git("add", "-N", "new.md")
+        self.touch_readme()
+        code, out = self.commit()
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(code, 0, out)
 
     def test_deleted_intent_to_add_file_does_not_block(self):
         self.base()
