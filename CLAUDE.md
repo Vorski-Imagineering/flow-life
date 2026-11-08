@@ -30,6 +30,10 @@ identity documents and correspondence. So:
 - The profile format.
 - Anything that would put files, identifiers or text from an adopting folder on a network.
 
+## Running the plugin while developing
+
+Sessions on this machine use the installed copy of the plugin (`claude plugin install flow-life@flow-life`), not this checkout: an issue's branch checked out here would change what every session runs. Load this checkout with `--plugin-dir <clone>/plugins/flow-life` only for a live check in a scratch folder, and never while another session works a real folder.
+
 ## Tests
 
 ```bash
