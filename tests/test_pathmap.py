@@ -157,8 +157,6 @@ class Excluded(unittest.TestCase):
         c = cfg(link_excluded_dirs=["sources"])
         for p in ["a/sources/p.html", "a/b/sources/x/y.md", "a/sources/README.md", "a/sources/"]:
             self.assertTrue(pathmap.is_excluded(p, c), p)
-        for written in ("sources/", "/sources"):
-            self.assertTrue(pathmap.is_excluded("a/sources/p.html", cfg(link_excluded_dirs=[written])))
         for p in ["a/README.md", "sources.md", "a/sourcesx/p.html"]:
             self.assertFalse(pathmap.is_excluded(p, c), p)
 

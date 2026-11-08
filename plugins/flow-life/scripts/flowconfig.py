@@ -71,9 +71,6 @@ class Config:
         if merged["profile"] != PROFILE_VERSION:
             raise ProfileError(f"{profile_path}: profile = {merged['profile']}, "
                                f"this plugin reads profile = {PROFILE_VERSION}")
-        # folder names; "sources/" or "/sources" means "sources"
-        merged["link_excluded_dirs"] = [d.strip("/") if isinstance(d, str) else d
-                                        for d in merged["link_excluded_dirs"]]
         for k, v in merged.items():
             if k in _SETS:
                 v = frozenset(v)
