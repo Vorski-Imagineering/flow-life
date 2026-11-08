@@ -251,6 +251,10 @@ class Guard(Tmp):
         other.mkdir()
         (other / "b.md").write_text("x")
         self.assertIsNone(guard_immutable.decide(str(other / "b.md")))
+        load = flowconfig.load
+        flowconfig.load = lambda *a, **k: (_ for _ in ()).throw(flowconfig.ProfileError("bad"))
+        self.addCleanup(setattr, flowconfig, "load", load)
+        self.assertIsNone(guard_immutable.decide(str(other / "b.md")))
 
 
 class PreCommit(Tmp):
