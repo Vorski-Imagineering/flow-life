@@ -154,6 +154,29 @@ class Excluded(unittest.TestCase):
             self.assertFalse(pathmap.is_excluded(p, c), p)
 
 
+class ExcludedDirs(unittest.TestCase):
+    def test_excluded_dirs_any_depth(self):
+        c = cfg(link_excluded_dirs=["sources"])
+        for p in ["a/sources/p.html", "a/b/sources/x/y.md", "a/sources/README.md", "a/sources/"]:
+            self.assertTrue(pathmap.is_excluded(p, c), p)
+        for p in ["a/README.md", "sources.md", "a/sourcesx/p.html"]:
+            self.assertFalse(pathmap.is_excluded(p, c), p)
+
+    def test_excluded_dirs_default_skips_nothing(self):
+        self.assertFalse(pathmap.is_excluded("a/sources/p.html", cfg()))
+
+    def test_excluded_dirs_reporter_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = Path(tmp)
+            (r / "a/sources").mkdir(parents=True)
+            (r / "a/sources/p.html").write_text('<a href="a/sources/gone.html">x</a>\n')
+            (r / "a/README.md").write_text("See `a/sources/p.html`.\n")
+            self.assertEqual(pathmap.check(cfg(r, link_excluded_dirs=["sources"])), [])
+            problems = pathmap.check(cfg(r))
+            self.assertTrue(any(p.startswith("a/sources/p.html:") and "unresolved" in p
+                                for p in problems), problems)
+
+
 class EndToEnd(unittest.TestCase):
     """Builds a tiny repo, moves things, runs rewrite + check."""
 

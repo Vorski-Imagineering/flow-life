@@ -66,12 +66,11 @@ Read this before step 2 when the folder is a project with its own habits:
 - **An existing meaning of "area"**: rename one side before laying out areas, and say which
   in the folder's `CLAUDE.md`.
 - **Captured web pages** or other copies whose links point elsewhere: add their folder's
-  name to `immutable_dirs` (skipped by the link check at any depth; they become
-  append-only, so a re-capture is a new file), or a top-level folder to
-  `link_excluded_prefixes`. A list setting replaces its default, so write the defaults
-  too (`references/profile-schema.md`): `immutable_dirs = ["sent-emails",
-  "received-emails", "portal-responses", "sources"]`, or
-  `link_excluded_prefixes = [".git/", "tmp/", "<folder>/"]`.
+  name to `link_excluded_dirs` (`link_excluded_dirs = ["sources"]`): the link check skips
+  them at any depth, and they can still be rewritten. Use `immutable_dirs` instead only
+  for evidence that must never change; it also makes them append-only. A list setting
+  replaces its default, so add to `immutable_dirs` and `link_excluded_prefixes` with
+  their defaults written out (`references/profile-schema.md`).
 - **Links**: root-relative by default; a path whose first segment is not a top-level name
   is read relative to the file that holds it.
 - **The project's own commit checks**: in `.githooks/pre-commit` (a Python script), replace

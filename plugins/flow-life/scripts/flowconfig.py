@@ -41,12 +41,14 @@ DEFAULTS = {
     # Not scanned for path references.
     "link_excluded_files": [],
     "link_excluded_prefixes": [".git/", "tmp/"],
+    # Folder names the link check skips at any depth (not append-only).
+    "link_excluded_dirs": [],
     "link_text_suffixes": [".md", ".html", ".py"],
     # Regular expressions for old folder names that must not reappear.
     "stale_patterns": [],
 }
 _SETS = {"immutable_dirs", "email_dirs", "id_allowed_files", "id_text_suffixes",
-         "link_excluded_files", "link_text_suffixes"}
+         "link_excluded_files", "link_excluded_dirs", "link_text_suffixes"}
 _TUPLES = {"areas", "id_allowed_prefixes", "link_excluded_prefixes", "stale_patterns"}
 
 

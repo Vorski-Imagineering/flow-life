@@ -26,6 +26,7 @@ a setting not named keeps the default below. An unknown setting is an error.
 | `id_text_suffixes` | `[".md", ".html", ".py", ".json", ".txt", ".csv"]` |
 | `link_excluded_files` | `[]` |
 | `link_excluded_prefixes` | `[".git/", "tmp/"]` |
+| `link_excluded_dirs` | `[]` |
 | `link_text_suffixes` | `[".md", ".html", ".py"]` |
 | `stale_patterns` | `[]` |
 
@@ -39,5 +40,5 @@ Meanings, briefly:
 - `dashboard`, `deadlines_heading`, `expiring_heading`, `report_title`: what the session report reads and prints.
 - `immutable_dirs`: append-only folders (edit guard and pre-commit).
 - `id_allowed_files`, `id_allowed_prefixes`: extra places identifiers may appear.
-- `link_excluded_files`, `link_excluded_prefixes`, `link_text_suffixes`: what the link check skips and reads.
+- `link_excluded_files`, `link_excluded_prefixes`, `link_excluded_dirs`, `link_text_suffixes`: what the link check skips (by file, by prefix from the root, by folder name at any depth) and reads.
 - `stale_patterns`: regular expressions for old names that must not reappear after a reorganisation.
