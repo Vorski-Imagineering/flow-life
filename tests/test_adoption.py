@@ -513,7 +513,42 @@ class PreCommit(Tmp):
         self.write("visa/draft.md", "Not added yet.\n")
         os.symlink(str(self.root / "visa/draft.md"), self.root / "visa/abs.md")
         self.git("add", "visa/abs.md")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("flow-life-staged", out)
+
+    def test_absolute_link_through_another_path_to_the_folder(self):
+        alias = self.root.parent / f"{self.root.name}-alias"
+        os.symlink(self.root, alias)
+        self.addCleanup(alias.unlink)
+        self.base()
+        self.write("visa/draft.md", "Not added yet.\n")
+        os.symlink(str(alias / "visa/draft.md"), self.root / "visa/abs.md")
+        self.git("add", "visa/abs.md")
         self.assertNotEqual(self.commit()[0], 0)
+
+    def test_missing_link_blob_is_not_a_traceback(self):
+        self.base()
+        self.git("update-index", "--add", "--info-only", "--cacheinfo",
+                 "120000,1234567890123456789012345678901234567890,visa/ghost")
+        self.assertNotIn("Traceback", self.run_check("--staged").stderr)
+
+    def test_missing_register_blob_stops_with_a_reason(self):
+        self.base()
+        self.git("update-index", "--cacheinfo",
+                 "100644,1234567890123456789012345678901234567890,documents/register.md")
+        r = self.run_check("--staged")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("documents/register.md", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_file_name_not_utf8_is_not_a_traceback(self):
+        self.base()
+        (self.root / os.fsdecode(b"visa/caf\xe9.md")).write_text("Fine.\n")
+        self.git("add", "-A")
+        code, out = self.commit()
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(code, 0, out)
 
     def test_rename_record_origin_is_not_read_as_a_record(self):
         self.base()
