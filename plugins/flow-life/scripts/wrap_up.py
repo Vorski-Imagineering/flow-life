@@ -46,7 +46,7 @@ def git_rows(cfg):
     if not check_repo.is_git(root):
         return [r for n in ("uncommitted", "unpushed", "stash")
                 for r in row("INFO", n, "not a git folder")]
-    rows = count_row("uncommitted", git(root, "status", "--porcelain").stdout.splitlines(), "path(s)")
+    rows = count_row("uncommitted", git(root, "-c", "core.quotePath=false", "status", "--porcelain", "--", ".").stdout.splitlines(), "path(s)")
     if git(root, "rev-parse", "--abbrev-ref", "@{u}").returncode != 0:
         rows += row("INFO", "unpushed", "no upstream, nothing to compare")
     else:

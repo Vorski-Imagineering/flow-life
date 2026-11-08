@@ -23,8 +23,8 @@ be told from a skipped one. `OPEN` is something left; `INFO` is named and never 
 "Unpushed" is relative to the last fetch. Exit 2 means this is not a flow-life folder.
 
 **Separate this session's work from what was already there.** The opening status report
-gave a count of uncommitted paths. Anything beyond that, and any file the conversation
-touched, is this session's. Earlier changes are named in one line and left alone.
+gave a count of uncommitted paths; no such line means the folder was clean. Anything
+beyond that, and any file the conversation touched, is this session's. Earlier changes are named in one line and left alone.
 
 ## 2. Checks the script cannot make
 

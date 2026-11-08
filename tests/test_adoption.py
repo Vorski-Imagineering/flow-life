@@ -999,9 +999,6 @@ class WrapUp(Tmp):
         self.git("add", "-A")
         self.git("commit", "-qm", "base")
 
-    def row(self, out, name):
-        return next(l for l in out.splitlines() if l[5:].startswith(name + ":") or l[4:].startswith(name + ":"))
-
     def test_clean_folder_passes(self):
         self.committed()
         code, out, _ = self.run_wrap()
@@ -1106,6 +1103,19 @@ class WrapUp(Tmp):
         self.assertIn("renew", row)
         self.assertIn("pay", row)
         self.assertNotIn("file", row)
+
+    def test_a_folder_inside_a_larger_repo_ignores_the_rest(self):
+        self.git("init", "-q")
+        sub = self.root / "sub"
+        quiet(scaffold.main, ["init", "--dir", str(sub), "--areas", "visa"])
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base")
+        (self.root / "outside.txt").write_text("x")
+        (sub / "naïve.md").write_text("x")
+        code, out, _ = self.run_wrap(sub)
+        self.assertIn("OPEN uncommitted: 1 path(s)", out)
+        self.assertIn("?? sub/naïve.md", out)
+        self.assertNotIn("outside.txt", out)
 
     def test_not_a_git_folder(self):
         self.init()
