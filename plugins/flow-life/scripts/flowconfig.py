@@ -71,6 +71,10 @@ class Config:
         if merged["profile"] != PROFILE_VERSION:
             raise ProfileError(f"{profile_path}: profile = {merged['profile']}, "
                                f"this plugin reads profile = {PROFILE_VERSION}")
+        bad = [d for d in merged["link_excluded_dirs"] if "/" in d]
+        if bad:
+            raise ProfileError(f"{profile_path or 'profile'}: link_excluded_dirs takes folder names, "
+                               f"not paths: {', '.join(bad)}")
         for k, v in merged.items():
             if k in _SETS:
                 v = frozenset(v)

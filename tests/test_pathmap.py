@@ -157,7 +157,9 @@ class Excluded(unittest.TestCase):
         c = cfg(link_excluded_dirs=["sources"])
         for p in ["a/sources/p.html", "a/b/sources/x/y.md", "a/sources/README.md", "a/sources/"]:
             self.assertTrue(pathmap.is_excluded(p, c), p)
-        self.assertTrue(pathmap.is_excluded("a/sources/p.html", cfg(link_excluded_dirs=["sources/"])))
+        for bad in ("sources/", "/sources", "a/sources"):
+            with self.assertRaisesRegex(flowconfig.ProfileError, "link_excluded_dirs"):
+                cfg(link_excluded_dirs=[bad])
         for p in ["a/README.md", "sources.md", "a/sourcesx/p.html"]:
             self.assertFalse(pathmap.is_excluded(p, c), p)
 
