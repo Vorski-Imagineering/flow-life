@@ -31,7 +31,7 @@ README.md                         dashboard: areas, next deadlines, expiring doc
 CLAUDE.md                         who this is for; background; areas
 personal-details.md               identifiers, mode 600
 .agents/flow-life.toml            profile
-documents/<type>/                 evidence; documents/register.md lists every file
+documents/<type>/                 evidence; the register lists every file
 <area>/README.md                  status, recurring obligations, process list
 <area>/reference.md               sources: official first, dated, no identifiers
 <area>/processes/active/<yyyy>-<slug>/
@@ -41,11 +41,17 @@ shared/reference.md               sources that serve more than one area
 docs/path-map.md                  every move, old -> new
 ```
 
+These are the defaults. The profile (`.agents/flow-life.toml`) can move the documents
+folder, the register, the email log, the path map, the identifiers file and the dashboard;
+wherever these rules name one of them, read the profile's path for it.
+
 A process folder holds `README.md` (status block first), `todo.md`, and as needed
 `drafts/`, `sent-emails/`, `received-emails/`, `submissions/` (with `portal-responses/`),
 `visits/<date>-<slug>/`, `calls/`, `attachments/`.
 
 Write paths root-relative (`documents/tax/certificate.pdf`) so they resolve from any file.
+A path whose first segment is not a top-level name is read as relative to the file that
+holds it.
 
 ## Process status
 
@@ -69,10 +75,14 @@ To close one: fill in the block (`Closed`, `Outcome`), move the folder from
 
 - Evidence goes in `documents/<type>/` (identity, residence, tax, ...), never inside an area
   or process: every body asks for the same papers.
-- Every new, replaced or sent document updates `documents/register.md`: current file,
+- Every new, replaced or sent document updates the register: current file,
   issued, expiry, superseded copies (kept, not deleted), where it was used, derived copies.
 - A document that goes stale (a certificate valid 3 months, an expiring card) also appears
   in the dashboard's "Expiring or stale documents" with its date.
+- A document kept in another system is a register row with its link. Anything sent to a
+  body also keeps a copy in the folder as its current file. A link is opened only when the
+  owner asks, with the session's own tools; nothing from the folder is searched for or
+  sent there.
 
 ## Correspondence
 

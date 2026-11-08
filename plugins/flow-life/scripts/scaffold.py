@@ -6,10 +6,10 @@
     scaffold.py process <area> <yyyy-slug> [--next TEXT] [--opened YYYY-MM-DD] [--dir DIR]
 
 `init` lays out a folder (profile, dashboard, CLAUDE.md, personal-details.md, register,
-email log, path map, shared reference, one folder per area). `--git` runs `git init`
-first if the folder is not a repository (no remote is added). `--hooks` copies the
-pre-commit shim to .githooks/ and sets core.hooksPath. Prints one line per file created
-and one per file left as it was.
+email log, path map, shared reference, one folder per area). When the folder already has
+a profile, each file goes where it says. `--git` runs `git init` first if the folder is
+not a repository (no remote is added). `--hooks` copies the pre-commit shim to .githooks/
+and sets core.hooksPath. Prints one line per file created and one per file left as it was.
 """
 import argparse
 import os
@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from datetime import date
 from pathlib import Path
 
@@ -72,28 +73,53 @@ def process(root, area_name, name, next_step, opened, out):
     write(root, f"{base}/todo.md", "process/todo.md", v, out)
 
 
+PATH_SETTINGS = ("register", "email_log", "path_map", "identifiers", "dashboard")
+
+
+def folder_config(root):
+    """Settings for the folder being laid out: its own profile only, never a parent's.
+    Stops, having written nothing, on a profile that does not load or that names a path
+    outside the folder."""
+    prof = Path(root) / flowconfig.PROFILE
+    try:
+        settings = tomllib.loads(prof.read_text()) if prof.is_file() else {}
+        cfg = flowconfig.Config(root, settings, prof if prof.is_file() else None)
+    except tomllib.TOMLDecodeError as e:
+        raise SystemExit(f"flow-life: {prof}: {e}")
+    except flowconfig.ProfileError as e:
+        raise SystemExit(f"flow-life: {e}")
+    for name in (*PATH_SETTINGS, "documents_dir"):
+        value = getattr(cfg, name)
+        if not isinstance(value, str) or os.path.normpath(value) == ".":
+            raise SystemExit(f"flow-life: {name} = {value!r} is not a file path")
+        if os.path.isabs(value) or os.path.normpath(value).split(os.sep)[0] == "..":
+            raise SystemExit(f"flow-life: {name} = {value} is outside this folder")
+    return cfg
+
+
 def init(root, title, areas, use_git, hooks, out):
     root = Path(root)
+    cfg = folder_config(root)
     if use_git and subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=root,
                                   capture_output=True).returncode != 0:
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         out.append("created  .git/ (git init, no remote)")
-    v = {"title": title, "today": date.today().isoformat()}
+    v = {"title": title, "today": date.today().isoformat(), "documents_dir": cfg.documents_dir,
+         **{name: getattr(cfg, name) for name in PATH_SETTINGS}}
     write(root, flowconfig.PROFILE, "flow-life.toml", v, out)
     if areas:
         prof = root / flowconfig.PROFILE
         text = prof.read_text()
         if "areas = []" in text:
             prof.write_text(text.replace("areas = []", "areas = [" + ", ".join(f'"{a}"' for a in areas) + "]"))
-    for rel, tpl in [("README.md", "README.md"), ("CLAUDE.md", "CLAUDE.md"),
-                     ("personal-details.md", "personal-details.md"),
-                     ("documents/register.md", "documents/register.md"),
-                     ("shared/correspondence/email-log.md", "shared/correspondence/email-log.md"),
+    for rel, tpl in [(cfg.dashboard, "README.md"), ("CLAUDE.md", "CLAUDE.md"),
+                     (cfg.identifiers, "personal-details.md"),
+                     (cfg.register, "documents/register.md"),
+                     (cfg.email_log, "shared/correspondence/email-log.md"),
                      ("shared/reference.md", "shared/reference.md"),
-                     ("docs/path-map.md", "docs/path-map.md"), (".gitignore", "gitignore")]:
+                     (cfg.path_map, "docs/path-map.md"), (".gitignore", "gitignore")]:
         write(root, rel, tpl, v, out)
-    details = root / "personal-details.md"
-    os.chmod(details, 0o600)
+    os.chmod(root / cfg.identifiers, 0o600)
     for a in areas:
         area(root, a, out)
     if hooks:
