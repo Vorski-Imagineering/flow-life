@@ -19,8 +19,11 @@ def decide(file_path):
         return None
     try:
         cfg = flowconfig.load(path.parent)
-    except flowconfig.ProfileError:
-        cfg = flowconfig.Config(path.parent)  # broken profile: still protect the defaults
+    except Exception:  # broken profile: still protect the defaults, rooted at its folder
+        profile = flowconfig.find_profile(path.parent)
+        if profile is None:
+            return None
+        cfg = flowconfig.Config(profile.parent.parent)
     if cfg is None:
         return None
     try:

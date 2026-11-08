@@ -230,6 +230,28 @@ class Guard(Tmp):
         (other / "b.md").write_text("x")
         self.assertIsNone(guard_immutable.decide(str(other / "b.md")))
 
+    def record(self):
+        self.init()
+        sent = self.root / "visa/processes/active/2026-x/sent-emails"
+        sent.mkdir(parents=True)
+        (sent / "a.md").write_text("x")
+        return sent
+
+    def test_broken_profile_still_protects_records(self):
+        sent = self.record()
+        prof = self.root / flowconfig.PROFILE
+        good = prof.read_text()
+        for bad in ("bogus = 1\n", "immutable_dirs = 5\n", "this is not toml\n"):
+            prof.write_text(good + bad)
+            self.assertIsNotNone(guard_immutable.decide(str(sent / "a.md")), bad)
+            self.assertIsNone(guard_immutable.decide(str(sent / "new.md")), bad)
+
+    def test_broken_profile_outside_a_flow_life_folder_is_silent(self):
+        other = Path(tempfile.mkdtemp()) / "sent-emails"
+        other.mkdir()
+        (other / "b.md").write_text("x")
+        self.assertIsNone(guard_immutable.decide(str(other / "b.md")))
+
 
 class PreCommit(Tmp):
     """The hook refuses edited records and a failed check, judged on what is being
