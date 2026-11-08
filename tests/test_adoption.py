@@ -747,6 +747,36 @@ class PreCommit(Tmp):
         self.assertNotIn("Traceback", out)
         self.assertEqual(code, 0, out)
 
+    def add_to_profile(self, line):
+        prof = self.root / flowconfig.PROFILE
+        prof.write_text(prof.read_text() + line + "\n")
+
+    def test_excluded_dir_stays_editable(self):
+        self.base()
+        self.add_to_profile('link_excluded_dirs = ["sources"]')
+        self.write("visa/sources/manifest.json", '{"urls": 1}\n')
+        self.write("visa/sources/p.html", '<a href="visa/sources/gone.html">x</a>\n')
+        self.git("add", "-A")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        self.write("visa/sources/manifest.json", '{"urls": 2}\n')
+        self.git("add", "-A")
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+
+    def test_identifier_in_excluded_dir_is_still_caught(self):
+        self.base()
+        self.add_to_profile('link_excluded_dirs = ["sources"]')
+        details = self.root / "personal-details.md"
+        details.write_text(details.read_text() + "| Passport | `XY1234567` |\n")
+        self.git("add", "-A")
+        self.assertEqual(self.commit()[0], 0)
+        self.write("visa/sources/p.html", "<p>XY1234567</p>\n")
+        self.git("add", "-A")
+        code, out = self.commit()
+        self.assertNotEqual(code, 0)
+        self.assertIn("Passport appears in visa/sources/p.html", out)
+
     def test_deleted_intent_to_add_file_does_not_block(self):
         self.base()
         self.write("documents/tax/draft.pdf", "x")

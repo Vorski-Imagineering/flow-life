@@ -72,6 +72,8 @@ def is_excluded(rel, cfg):
             or rel.startswith(cfg.link_excluded_prefixes)):
         return True
     parts = rel.split("/")
+    if any(d in cfg.link_excluded_dirs for d in parts[:-1]):
+        return True
     return parts[-1] != "README.md" and any(d in cfg.immutable_dirs for d in parts[:-1])
 
 
