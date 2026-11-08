@@ -56,6 +56,33 @@ Never add a remote or push unless the person asks for it by name.
 
 The folder already holds scans, PDFs, letters and notes. Nothing is moved without approval.
 
+### A folder that already has its own conventions
+
+Read this before step 2 when the folder is a project with its own habits:
+
+- **Its own index**: set `register = "<its path>"` in `.agents/flow-life.toml` before
+  running `scaffold.py init`, which then keeps that file and creates no other register;
+  `/flow-life:register-document` fills that table's own columns.
+- **An existing meaning of "area"**: rename one side before laying out areas, and say which
+  in the folder's `CLAUDE.md`.
+- **Captured web pages** or other copies whose links point elsewhere: add their folder's
+  name to `immutable_dirs` (skipped by the link check at any depth; they become
+  append-only, so a re-capture is a new file), or a top-level folder to
+  `link_excluded_prefixes`. A list setting replaces its default, so write the defaults
+  too (`references/profile-schema.md`): `immutable_dirs = ["sent-emails",
+  "received-emails", "portal-responses", "sources"]`, or
+  `link_excluded_prefixes = [".git/", "tmp/", "<folder>/"]`.
+- **Links**: root-relative by default; a path whose first segment is not a top-level name
+  is read relative to the file that holds it.
+- **The project's own commit checks**: in `.githooks/pre-commit` (a Python script), replace
+  its last line with one that runs flow-life's check and then the project's own only when
+  that passed, for example
+  `code = subprocess.run(["sh", str(root / "scripts/pre-commit")]).returncode` then
+  `sys.exit(code or subprocess.run(["sh", "-c", "<the project's check command>"]).returncode)`.
+  Setup keeps an existing file and a plugin update does not touch it.
+- **Documents in other systems**: register rows with their link; name each system, and the
+  tool that reads it, under `## Other systems` in `CLAUDE.md`.
+
 1. **Survey, read-only.** List the tree; open what you need to classify it. Do not open
    more personal documents than needed to know what each is.
 2. **Propose a mapping** as a table: current path → new path, grouped as documents (by
@@ -63,7 +90,8 @@ The folder already holds scans, PDFs, letters and notes. Nothing is moved withou
    references, unknown. Ask about the unknowns.
 3. **On approval**, if the folder is not already a git repository, offer `git init`
    first and commit the untouched state, so every later step can be undone. Then run
-   `scaffold.py init` (it keeps existing files), and move in batches with
+   `scaffold.py init` (it keeps existing files). If `.agents/flow-life.toml` already
+   exists, `scaffold.py init` creates each file where it says. Move in batches with
    `/flow-life:move` (each batch: `git mv`, path-map rows, rewrite, link check, commit).
 4. **Fill the indexes**: a register row for each document, a log row for each kept
    email, a status block for each process, the dashboard, the identifiers table.

@@ -8,7 +8,7 @@ is particular to this person and this folder.
 ## Background
 
 Who this is for, where they live, and what each area covers. Keep identifiers out:
-they belong in `personal-details.md`.
+they belong in `{identifiers}`.
 
 ## Areas
 
@@ -16,4 +16,10 @@ One line per area: what it covers and which bodies it deals with.
 
 ## Documents held
 
-Short overview by `documents/<type>/` folder; `documents/register.md` is the detail.
+Short overview by `{documents_dir}/<type>/` folder; `{register}` is the detail.
+
+## Other systems
+
+Documents or records kept outside this folder (a Drive folder, a supplier portal), and
+which tool in a Claude Code session reads each. A link is opened only when the owner asks;
+nothing from this folder is searched for or sent there.
