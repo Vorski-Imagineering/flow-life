@@ -644,10 +644,13 @@ class PreCommit(Tmp):
         self.git("config", "remote.b.promisor", "2")
         self.assertTrue(check_repo._partial_clone(self.root))
 
-    def test_two_level_promisor_key_is_not_a_remote(self):
+    def test_promisor_keys_git_fetches_through(self):
         self.base()
         self.git("config", "remote.promisor", "true")
-        self.assertFalse(check_repo._partial_clone(self.root))
+        self.assertTrue(check_repo._partial_clone(self.root))
+        self.git("config", "--unset", "remote.promisor")
+        self.git("config", "remote..promisor", "true")
+        self.assertTrue(check_repo._partial_clone(self.root))
 
     def test_promisor_remote_named_with_bytes_not_utf8(self):
         self.base()
