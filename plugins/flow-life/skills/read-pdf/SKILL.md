@@ -7,6 +7,9 @@ description: Use whenever a PDF in a flow-life folder is about to be read or ask
 
 Read `${CLAUDE_PLUGIN_ROOT}/references/rules.md` (Documents, Sensitive data) first.
 
+Only inside a flow-life folder (a `.agents/flow-life.toml` at or above the PDF). Anywhere
+else, read the PDF as usual and write nothing.
+
 1. **Ask the script, before opening the PDF:**
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pdf_summary.py" status <pdf>
@@ -16,10 +19,17 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/rules.md` (Documents, Sensitive data) fir
      lacks, and then add what was missing to the summary.
    - Exit 1 (`none`) or 3 (`stale`): go on. `stale` means the PDF changed since it was
      summarised, so the old summary is not to be trusted.
+   - Exit 4 (`foreign`): a file with that name already exists and is not a summary (the
+     owner's own note beside an exported PDF). Never overwrite it: read the PDF, answer
+     from it, and say no summary was written because the name is taken.
+   - Exit 2: the path is wrong; say so and ask for the right one.
+   - The PDF sits in an append-only folder (`immutable_dirs`) or an email folder
+     (`email_dirs`): read it, answer from it, write no summary there (a new file would be an
+     unlogged record).
 2. **Read the PDF.** If it cannot be read (a scan with no text), say so and write no summary.
 3. **Write the summary beside it**, same folder and name with `.md`
-   (`documents/tax/return-2026.pdf` gets `documents/tax/return-2026.md`; an existing stale
-   one is rewritten). Its first line is exactly the output of
+   (`documents/tax/return-2026.pdf` gets `documents/tax/return-2026.md`; a stale summary
+   is rewritten). Its first line is exactly the output of
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/pdf_summary.py" stamp <pdf>`. Then, in plain
    Markdown: what the document is, who issued it and when, the facts a later question is
    likely to need (amounts, dates, deadlines, what it asks of the owner), and anything

@@ -915,8 +915,15 @@ class PdfSummary(Tmp):
         pdf.write_bytes(b"changed")
         r = self.run_script("status", str(pdf))
         self.assertEqual((r.returncode, r.stdout.strip()), (3, "stale"))
-        summary.write_text("No stamp line.\n")
+        summary.write_text("<!-- flow-life:pdf-summary sha256=" + "0" * 64 + " -->\n")
         self.assertEqual(self.run_script("status", str(pdf)).returncode, 3)
+
+    def test_a_file_that_is_not_a_summary_is_foreign(self):
+        pdf = self.root / "letter.pdf"
+        pdf.write_bytes(b"x")
+        (self.root / "letter.md").write_text("The owner's own letter, not a summary.\n")
+        r = self.run_script("status", str(pdf))
+        self.assertEqual((r.returncode, r.stdout.strip()), (4, "foreign"))
 
     def test_stamp_is_sha256_of_the_pdf(self):
         import hashlib
@@ -957,9 +964,10 @@ class PdfSummary(Tmp):
 
 class Manifests(unittest.TestCase):
     def test_read_pdf_skill_is_named_where_pdfs_are_placed(self):
-        self.assertTrue((PLUGIN / "skills/read-pdf/SKILL.md").is_file())
+        skill = (PLUGIN / "skills/read-pdf/SKILL.md").read_text()
+        self.assertTrue(skill.startswith("---\nname: read-pdf\n"))
         for rel in ("references/rules.md", "skills/register-document/SKILL.md",
-                    "skills/file-email/SKILL.md"):
+                    "skills/file-email/SKILL.md", "skills/move/SKILL.md"):
             self.assertIn("read-pdf", (PLUGIN / rel).read_text(), rel)
         self.assertIn("read-pdf", (PLUGIN.parents[1] / "README.md").read_text())
 

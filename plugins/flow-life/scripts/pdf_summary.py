@@ -4,8 +4,10 @@
     pdf_summary.py status <pdf>   exit 0 and the summary path when `<pdf minus .pdf>.md` exists
                                   and its first line carries the PDF's current SHA-256;
                                   exit 1 and `none` when there is no such file;
-                                  exit 3 and `stale` when the file exists but the line is
-                                  missing or the hash differs
+                                  exit 3 and `stale` when the file is a summary of another
+                                  version of the PDF (a stamp with a different hash);
+                                  exit 4 and `foreign` when the file exists but is not a
+                                  summary at all (no stamp): never to be overwritten
     pdf_summary.py stamp <pdf>    print that first line for the PDF
 
 A missing PDF is exit 2 with a reason. The summary itself is written by the agent
@@ -21,7 +23,8 @@ STAMP_RE = re.compile(r"^<!-- flow-life:pdf-summary sha256=([0-9a-f]{64}) -->\s*
 
 
 def digest(pdf):
-    return hashlib.sha256(Path(pdf).read_bytes()).hexdigest()
+    with open(pdf, "rb") as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def summary_path(pdf):
@@ -34,7 +37,9 @@ def status(pdf):
         return 1, "none"
     first = summary.read_text(errors="replace").split("\n", 1)[0]
     m = STAMP_RE.match(first)
-    if not m or m.group(1) != digest(pdf):
+    if not m:
+        return 4, "foreign"
+    if m.group(1) != digest(pdf):
         return 3, "stale"
     return 0, str(summary)
 
