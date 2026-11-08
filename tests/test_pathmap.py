@@ -153,11 +153,11 @@ class Excluded(unittest.TestCase):
                   "licence/processes/active/x/drafts/d.md"]:
             self.assertFalse(pathmap.is_excluded(p, c), p)
 
-
     def test_excluded_dirs_any_depth(self):
         c = cfg(link_excluded_dirs=["sources"])
         for p in ["a/sources/p.html", "a/b/sources/x/y.md", "a/sources/README.md", "a/sources/"]:
             self.assertTrue(pathmap.is_excluded(p, c), p)
+        self.assertTrue(pathmap.is_excluded("a/sources/p.html", cfg(link_excluded_dirs=["sources/"])))
         for p in ["a/README.md", "sources.md", "a/sourcesx/p.html"]:
             self.assertFalse(pathmap.is_excluded(p, c), p)
 
