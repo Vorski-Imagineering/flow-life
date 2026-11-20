@@ -1184,6 +1184,14 @@ class Manifests(unittest.TestCase):
         hooks = json.loads((PLUGIN / "hooks/hooks.json").read_text())["hooks"]
         self.assertFalse({"Stop", "SessionEnd"} & set(hooks))
 
+    def test_flight_checkin_leaves_passport_and_money_to_the_owner(self):
+        self.assertIn("`flight-checkin`", (PLUGIN.parents[1] / "README.md").read_text())
+        skill = (PLUGIN / "skills/flight-checkin/SKILL.md").read_text()
+        for words in ("passport or ID numbers", "anything that costs money",
+                      "Never \"Accept all\"", "the owner's click"):
+            self.assertIn(words, skill)
+        self.assertTrue((PLUGIN / "skills/flight-checkin/references/airlines.md").is_file())
+
     def test_every_skill_has_frontmatter(self):
         skills = sorted((PLUGIN / "skills").glob("*/SKILL.md"))
         self.assertTrue(skills)
