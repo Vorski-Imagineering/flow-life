@@ -78,8 +78,10 @@ folder without a `.agents/flow-life.toml`.
 | `read-pdf` | summarise a PDF once, beside it, and reuse the summary |
 | `move` | move files and keep every reference working |
 | `reference` | keep what was learned, sourced and dated |
+| `flight-checkin` | check in for a flight in your Chrome; you type only passport numbers, nothing paid is added |
 
-The agent drafts; you send, pay, sign and submit. No skill does those for you.
+The agent drafts; you send, pay, sign and submit. No skill does those for you, except
+`flight-checkin`: asking it to check you in is the go-ahead to submit that one check-in.
 
 ## Your folder's profile
 
